@@ -29,11 +29,14 @@ Original repository: https://github.com/sea5kg/bo
 import os
 import sys
 import time
+import socket
+import errno
 import hashlib
 from pathlib import Path
 import yaml
 
 BUF_READ_SIZE = 65536
+SEND_BUFFER_SIZE = 512
 
 VERSION = "v0.0.1"
 
@@ -88,6 +91,55 @@ def get_all_files(_startdir):
             if os.path.isfile(_filepath):
                 _ret.append(_filepath)
     return _ret
+
+
+def md5_by_file(_filepath):
+    """ Calculate md5 by file """
+    md5 = hashlib.md5()
+    with open(_filepath, 'rb') as _file:
+        while True:
+            data = _file.read(BUF_READ_SIZE)
+            if not data:
+                break
+            md5.update(data)
+    return md5.hexdigest()
+
+
+def send_param(_sock, name, value):
+    """ send command """
+    name = name.strip()
+    value = str(value).strip()
+    command = name + " " + value
+    command = command.strip()
+    print(command)
+    command += "\n"
+    _sock.send(command.encode())
+    resp = _sock.recv(1024).decode("utf-8")
+    accepted = ""
+    if len(resp) >= 8:
+        accepted = resp[:8]
+    # LATER: check value
+    if accepted != "ACCEPTED":
+        fatal(7, "Expected [ACCEPTED] but got [" + str(resp) + "]")
+    print(resp)
+
+
+def send_file(_sock, _filepath):
+    """ send file """
+    print("SEND FILE " + _filepath)
+    with open(_filepath, 'rb') as _file:
+        while True:
+            data = _file.read(SEND_BUFFER_SIZE)
+            if not data:
+                break
+            _sock.send(data)
+    resp = _sock.recv(1024).decode("utf-8")
+    accepted = ""
+    if len(resp) >= 8:
+        accepted = resp[:8]
+    if accepted != "ACCEPTED":
+        fatal(8, "Expected [ACCEPTED] but got [" + str(resp) + "]")
+    print(resp)
 
 
 if os.path.isfile(BO_CONFIG_FILEPATH):
@@ -147,6 +199,7 @@ if SUBCOMMANDS[0] == "config":
             "servers": {
                 "base": {
                     "host": SERVER0,
+                    "port": 4319,
                     "target_dir": TARGET_DIR,
                     "cache_path": CACHE_PATH,
                 }
@@ -179,7 +232,13 @@ if SUBCOMMANDS[0] == "sync":
     if SUBCOMMANDS[1] in BO_CONFIG["workdirs"][CURRENT_DIR]["servers"]:
         TO_SERVER = SUBCOMMANDS[1]
     cfg = BO_CONFIG["workdirs"][CURRENT_DIR]["servers"][TO_SERVER]
-    print("Start syncing files\n    >from: " + CURRENT_DIR + " \n    >to: " + cfg["host"])
+    SERVER_HOST = cfg["host"]
+    SERVER_PORT = cfg["port"]
+    TARGET_DIR = cfg["target_dir"]
+    print(
+        "Start syncing files\n    >from: " + CURRENT_DIR + " \n"
+        "    >to: " + SERVER_HOST + ":" + str(SERVER_PORT)
+    )
     cache_path = cfg["cache_path"]
     FILES = {}
     if os.path.isfile(cache_path):
@@ -196,17 +255,10 @@ if SUBCOMMANDS[0] == "sync":
     _CHANGES = 0
     for filepath in current_files:
         if filepath not in FILES:
-            md5 = hashlib.md5()
-            with open(filepath, 'rb') as _file:
-                while True:
-                    data = _file.read(BUF_READ_SIZE)
-                    if not data:
-                        break
-                    md5.update(data)
             FILES[filepath] = {
                 "todo_sync": True,
                 "operation_sync": "UPDATE",
-                "md5": md5.hexdigest(),
+                "md5": md5_by_file(filepath),
                 "last_modify": os.path.getmtime(filepath),
                 "last_modify_formatted": time.ctime(os.path.getmtime(filepath)),
             }
@@ -230,5 +282,35 @@ if SUBCOMMANDS[0] == "sync":
     print("Updating cache...")
     with open(cache_path, 'w') as _file:
         yaml.dump(FILES, _file, indent=2)
-    print("Done.")
+    CACHE_MD5 = md5_by_file(cache_path)
+    cache_size = os.path.getsize(cache_path)
+    end = time.time()
+    print("Done. Elapsed ", end - start, "sec")
+    try:
+        print("Connecting... " + SERVER_HOST + ":" + str(SERVER_PORT))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        sock.connect((SERVER_HOST, SERVER_PORT))
+        _ = sock.recv(1024).decode("utf-8")
+        send_param(sock, "TARGET_DIR", TARGET_DIR)
+        send_param(sock, "CACHE_MD5", CACHE_MD5)
+        send_param(sock, "CACHE_SIZE", cache_size)
+        send_param(sock, "SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
+        send_param(sock, "CACHE_SEND", 1)
+        print("Sending cache... ")
+        send_file(sock, cache_path)
+        # _ = s.recv(1024).decode("utf-8")
+        # s.send(str(flag + "\n").encode())
+        # _ = s.recv(1024).decode("utf-8")
+        sock.close()
+    except socket.timeout:
+        fatal(8, "Socket timeout")
+    except socket.error as serr:
+        if serr.errno == errno.ECONNREFUSED:
+            fatal(9, "Connection refused")
+        else:
+            print(serr)
+            fatal(10, "Socker error " + str(serr))
+    except Exception as err:  # pylint: disable=broad-except
+        fatal(11, "Exception is " + str(err))
     sys.exit(0)
