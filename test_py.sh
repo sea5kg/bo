@@ -15,14 +15,14 @@ check_ret() {
     fi
 }
 
-python -m pylint bo.py
+python3 -m pylint bo.py
 check_ret $? "pylint bo.py"
 
-python -m pycodestyle --max-line-length=120 bo.py
+python3 -m pycodestyle --max-line-length=120 bo.py
 check_ret $? "pycodestyle bo.py"
 
-python -m pylint bo.py
+python3 -m pylint bo.py
 check_ret $? "pylint bo-server.py"
 
-python -m pycodestyle --max-line-length=120 bo.py
+python3 -m pycodestyle --max-line-length=120 bo.py
 check_ret $? "pycodestyle bo-server.py"
