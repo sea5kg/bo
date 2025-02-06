@@ -12,3 +12,64 @@ Usage:
     'bo config path' - path to config file
     'bo sync' - partial sync to remote server
 ```
+
+
+## Install (First way)
+
+Ubuntu 24.04:
+```sh
+$ python3 -m pip install --break-system-packages pyyaml
+$ sudo wget https://raw.githubusercontent.com/sea5kg/bo/refs/heads/main/bo.py /usr/bin/bo && sudo chmod +x /usr/bin/bo
+```
+
+## Install (Second way)
+
+Linux
+```sh
+$ python3 -m pip install --break-system-packages pyyaml
+$ git clone https://github.com/sea5kg/bo.git ~/bo.git
+$ sudo ln -s ~/bo.git /usr/bin/bo
+```
+
+
+## How to use
+
+### Run bo-server.py
+
+On target virtual machine start `bo-server.py`
+
+### Configure project sync on current machine
+
+On host mchine init new target for directory:
+```
+$ cd your-project.git
+$ bo config init
+Welcom to bo (v0.0.1)!
+Utilite for sync files (like rsync) and run build on remote server (or Virtual Machine in local network)
+
+Server: 192.168.5.30
+Target dir: C:\develop\your_project111
+Done.
+```
+
+### Configure  stack of commands on current machine
+
+```
+$ cd your-project.git
+$ bo config command
+```
+
+
+### Sync files with remote machine
+
+```
+$ cd your-project.git
+$ bo sync
+```
+
+### Sync files with remote machine
+
+```
+$ cd your-project.git
+$ bo run
+```
