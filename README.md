@@ -19,7 +19,7 @@ Usage:
 Ubuntu 24.04:
 ```sh
 $ python3 -m pip install --break-system-packages pyyaml
-$ sudo wget https://raw.githubusercontent.com/sea5kg/bo/refs/heads/main/bo.py /usr/bin/bo && sudo chmod +x /usr/bin/bo
+$ sudo wget https://raw.githubusercontent.com/sea5kg/bo/refs/heads/dev/bo.py /usr/bin/bo && sudo chmod +x /usr/bin/bo
 ```
 
 ## Install (Second way)
