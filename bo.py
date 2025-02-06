@@ -70,7 +70,7 @@ BO_CONFIG = {
 def resave_config():
     """ resave config file """
     BO_CONFIG["bo_version"] = VERSION
-    with open(BO_CONFIG_FILEPATH, 'w') as _file:
+    with open(BO_CONFIG_FILEPATH, 'w', encoding="utf-8") as _file:
         yaml.dump(BO_CONFIG, _file, indent=2)
 
 
@@ -143,7 +143,7 @@ def send_file(_sock, _filepath):
 
 
 if os.path.isfile(BO_CONFIG_FILEPATH):
-    with open(BO_CONFIG_FILEPATH) as _file:
+    with open(BO_CONFIG_FILEPATH, encoding="utf-8") as _file:
         try:
             BO_CONFIG = yaml.safe_load(_file)
         except yaml.YAMLError as exc:
@@ -170,6 +170,7 @@ if "help" in SUBCOMMANDS:
         "Usage:\n"
         "    'bo config init' - add current directory to config\n"
         "    'bo config deinit' - remove current directory from config\n"
+        "    'bo config command' - Init command for current directory\n"
         "    'bo config ls' - print configs\n"
         "    'bo config path' - path to config file\n"
         "    'bo sync' - partial sync to remote server\n"
@@ -208,6 +209,25 @@ if SUBCOMMANDS[0] == "config":
         resave_config()
         print("Done.")
         sys.exit(0)
+    elif SUBCOMMANDS[1] == "command":
+        if CURRENT_DIR not in BO_CONFIG["workdirs"]:
+            fatal(4, "Not initialized current directory: " + CURRENT_DIR)
+        if "commands" not in BO_CONFIG["workdirs"][CURRENT_DIR]:
+            BO_CONFIG["workdirs"][CURRENT_DIR]["commands"] = {}
+        _cfg_cmds = BO_CONFIG["workdirs"][CURRENT_DIR]["commands"]
+        COMMAND_NAME = input("Command Name: ")
+        _cfg_cmds[COMMAND_NAME] = []
+        NEW_COMMAND = "."
+        while NEW_COMMAND != "":
+            COMMAND = input("Command (empty string will be finish entry): ")
+            COMMAND = COMMAND.strip()
+            if COMMAND == "":
+                break
+            _cfg_cmds[COMMAND_NAME].append(COMMAND)
+        BO_CONFIG["workdirs"][CURRENT_DIR]["commands"] = _cfg_cmds
+        resave_config()
+        print("Done.")
+        sys.exit(0)
     elif SUBCOMMANDS[1] == "ls":
         for _workdir in BO_CONFIG["workdirs"]:
             _item = BO_CONFIG["workdirs"][_workdir]
@@ -242,7 +262,7 @@ if SUBCOMMANDS[0] == "sync":
     cache_path = cfg["cache_path"]
     FILES = {}
     if os.path.isfile(cache_path):
-        with open(cache_path) as _file:
+        with open(cache_path, encoding="utf-8") as _file:
             try:
                 FILES = yaml.safe_load(_file)
             except yaml.YAMLError as exc:
@@ -280,7 +300,7 @@ if SUBCOMMANDS[0] == "sync":
     )
     start = time.time()
     print("Updating cache...")
-    with open(cache_path, 'w') as _file:
+    with open(cache_path, 'w', encoding="utf-8") as _file:
         yaml.dump(FILES, _file, indent=2)
     CACHE_MD5 = md5_by_file(cache_path)
     cache_size = os.path.getsize(cache_path)
