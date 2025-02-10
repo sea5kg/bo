@@ -34,9 +34,9 @@ $ sudo ln -s ~/bo.git /usr/bin/bo
 
 ## How to use
 
-### Run bo-server.py
+### Run bo_server.py
 
-On target virtual machine start `bo-server.py`
+On target virtual machine start `bo_server.py`
 
 ### Configure project sync on current machine
 

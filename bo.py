@@ -89,7 +89,7 @@ def get_all_files(_startdir):
                 _rec.append(_filepath)
                 continue
             if os.path.isfile(_filepath):
-                _ret.append(_filepath)
+                _ret.append(_filepath[len(_startdir)+1:])
     return _ret
 
 
@@ -103,6 +103,58 @@ def md5_by_file(_filepath):
                 break
             md5.update(data)
     return md5.hexdigest()
+
+
+class BoFilesCache:
+    """ helper class for control of cache """
+
+    def __init__(self, _cache_path):
+        self.__files = {}
+        self.__cache_path = _cache_path
+        # load
+        if os.path.isfile(self.__cache_path):
+            with open(self.__cache_path, encoding="utf-8") as _file:
+                try:
+                    self.__files = yaml.safe_load(_file)
+                except yaml.YAMLError as exc:
+                    print(exc)
+                    sys.exit(exc)
+
+    def resave_cache(self):
+        """ resave file """
+        with open(self.__cache_path, 'w', encoding="utf-8") as _file:
+            yaml.dump(self.__files, _file, indent=2)
+
+    def has(self, _file):
+        """ is contains file """
+        return _file in self.__files
+
+    def add(self, _file, _fullpath):
+        """ added file to cache """
+        self.__files[_file] = {
+            "required_sync": "UPDATE",
+            "md5": md5_by_file(_fullpath),
+            "size": os.path.getsize(_fullpath),
+            "last_modify": os.path.getmtime(_fullpath),
+            "last_modify_formatted": time.ctime(os.path.getmtime(_fullpath)),
+        }
+
+    def get(self, _file):
+        """ return file info """
+        return self.__files[_file]
+
+    def update(self, _file, _info):
+        """ update file info """
+        for _key in _info:
+            self.__files[_file][_key] = _info[_key]
+
+    def remove(self, _file):
+        """ remove file from list """
+        del self.__files[_file]
+
+    def get_files(self):
+        """ return all the file list """
+        return self.__files
 
 
 def send_param(_sock, name, value):
@@ -124,7 +176,19 @@ def send_param(_sock, name, value):
     print(resp)
 
 
-def send_file(_sock, _filepath):
+def action_request(_sock):
+    """ action_request """
+    command = "ACTION_REQUEST"
+    print(command)
+    command += "\n"
+    _sock.send(command.encode())
+    resp = _sock.recv(1024).decode("utf-8")
+    resp = resp.strip()
+    print(resp)
+    return resp
+
+
+def send_file(_sock: socket.socket, _filepath):
     """ send file """
     print("SEND FILE " + _filepath)
     with open(_filepath, 'rb') as _file:
@@ -133,6 +197,7 @@ def send_file(_sock, _filepath):
             if not data:
                 break
             _sock.send(data)
+    _sock.send("".encode())
     resp = _sock.recv(1024).decode("utf-8")
     accepted = ""
     if len(resp) >= 8:
@@ -260,38 +325,32 @@ if SUBCOMMANDS[0] == "sync":
         "    >to: " + SERVER_HOST + ":" + str(SERVER_PORT)
     )
     cache_path = cfg["cache_path"]
-    FILES = {}
-    if os.path.isfile(cache_path):
-        with open(cache_path, encoding="utf-8") as _file:
-            try:
-                FILES = yaml.safe_load(_file)
-            except yaml.YAMLError as exc:
-                print(exc)
-                sys.exit(exc)
+    FILES = BoFilesCache(cache_path)
 
     print("Scanning files...")
     start = time.time()
     current_files = get_all_files(CURRENT_DIR)
     _CHANGES = 0
-    for filepath in current_files:
-        if filepath not in FILES:
-            FILES[filepath] = {
-                "todo_sync": True,
-                "operation_sync": "UPDATE",
-                "md5": md5_by_file(filepath),
-                "last_modify": os.path.getmtime(filepath),
-                "last_modify_formatted": time.ctime(os.path.getmtime(filepath)),
-            }
+    for _file in current_files:
+        fullpath = os.path.join(CURRENT_DIR, _file)
+        if not FILES.has(_file):
+            FILES.add(_file, fullpath)
             _CHANGES += 1
         else:
-            _fileinfo = FILES[filepath]
-            if os.path.getmtime(filepath) != _fileinfo["last_modify"]:
-                FILES[filepath]["todo_sync"] = True
-                FILES[filepath]["operation_sync"] = "UPDATE"
-    for filepath in FILES:
-        if filepath not in current_files:
-            FILES[filepath]["todo_sync"] = True
-            FILES[filepath]["operation_sync"] = "DELETE"
+            _fileinfo = FILES.get(_file)
+            if os.path.getmtime(fullpath) != _fileinfo["last_modify"]:
+                FILES.update(_file, {
+                    "required_sync": "UPDATE",
+                    "md5": md5_by_file(fullpath),
+                    "size": os.path.getsize(fullpath),
+                    "last_modify": os.path.getmtime(fullpath),
+                    "last_modify_formatted": time.ctime(os.path.getmtime(fullpath)),
+                })
+            if not os.path.isfile(fullpath):
+                FILES.update(_file, {"required_sync": "DELETE"})
+    for _file in FILES.get_files():
+        if _file not in current_files:
+            FILES.update(_file, {"required_sync": "DELETE"})
             _CHANGES += 1
     end = time.time()
     print(
@@ -300,8 +359,7 @@ if SUBCOMMANDS[0] == "sync":
     )
     start = time.time()
     print("Updating cache...")
-    with open(cache_path, 'w', encoding="utf-8") as _file:
-        yaml.dump(FILES, _file, indent=2)
+    FILES.resave_cache()
     CACHE_MD5 = md5_by_file(cache_path)
     cache_size = os.path.getsize(cache_path)
     end = time.time()
@@ -319,6 +377,25 @@ if SUBCOMMANDS[0] == "sync":
         send_param(sock, "CACHE_SEND", 1)
         print("Sending cache... ")
         send_file(sock, cache_path)
+
+        _action = action_request(sock)
+        while _action != "ACTIONS_COMPLETED":
+            if _action.startswith("ACTION_DELETED "):
+                _filename = _action[len("ACTION_DELETED "):]
+                if FILES.has(_filename):
+                    FILES.remove(_filename)
+                FILES.resave_cache()
+            elif _action.startswith("ACTION_SEND_ME_FILE "):
+                _file = _action[len("ACTION_SEND_ME_FILE "):]
+                fullpath = os.path.join(CURRENT_DIR, _file)
+                send_file(sock, fullpath)
+                FILES.update(_file, {"required_sync": "NONE"})
+            else:
+                print("ERROR UNKNOWN ACTION -> ", _action)
+
+            _action = action_request(sock)
+        FILES.resave_cache()
+
         # _ = s.recv(1024).decode("utf-8")
         # s.send(str(flag + "\n").encode())
         # _ = s.recv(1024).decode("utf-8")

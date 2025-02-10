@@ -31,6 +31,7 @@ import threading
 import hashlib
 import re
 import os
+import yaml
 
 HOST = ""
 PORT = 4319
@@ -66,7 +67,10 @@ class Connect(threading.Thread):
 
     def __receive_file(self, filepath, file_md5, file_size, buf_size):
         """ __process_command_get """
-        print("Receiving file... " + filepath + "(" + str(file_size) + " bytes) per " + str(buf_size) + " bytes")
+        print(
+            "Receiving file... " + filepath + " (" + str(file_size) + " bytes) " +
+            "per " + str(buf_size) + " bytes"
+        )
         _received_bytes = 0
         with open(filepath, 'wb') as _file:
             while _received_bytes < file_size:
@@ -79,27 +83,39 @@ class Connect(threading.Thread):
         got_file_md5 = md5_by_file(filepath)
         if file_md5 != got_file_md5:
             self.__sock.send("WRONG_MD5".encode())
-            return 
+            print("WRONG_MD5")
+            print("Expected: " + file_md5)
+            print("Got: " + got_file_md5)
+            return False
         print("Done")
         self.__sock.send("ACCEPTED".encode())
+        return True
+
+    def __read_command(self):
+        buf = self.__sock.recv(1024).decode("utf-8").strip()
+        if buf == "":
+            return None, None
+        # print(buf)
+        command = re.search(r"\w*", buf).group()
+        return buf, command
 
     def run(self):
-        welcome_s = "Welcome to bo-server\n"
+        welcome_s = "Welcome to bo server\n"
         welcome_s += "target_dir? "
         self.__sock.send(welcome_s.encode())
         target_dir = None
         cache_md5 = None
         cache_size = None
         send_buffer_size = None
+        cache = {}
         # ptrn = re.compile(r""".*(?P<name>\w*?).*""", re.VERBOSE)
         while True:
             if self.__is_kill is True:
                 break
-            buf = self.__sock.recv(1024).decode("utf-8").strip()
-            if buf == "":
+            buf, command = self.__read_command()
+            if command is None:
                 break
             # print(buf)
-            command = re.search(r"\w*", buf).group()
             if command == "TARGET_DIR":
                 target_dir = buf[len("TARGET_DIR "):]
                 print("target_dir: '" + target_dir + "'")
@@ -108,6 +124,31 @@ class Connect(threading.Thread):
                 cache_md5 = buf[len("CACHE_MD5 "):]
                 print("cache_md5: " + cache_md5)
                 self.__sock.send(str("ACCEPTED " + cache_md5).encode())
+            elif command == "ACTION_REQUEST":
+                for _file in cache:
+                    _info = cache[_file]
+                    print(_file, _info)
+                    fullpath = os.path.join(target_dir, _file)
+                    if _info['required_sync'] == 'DELETE':
+                        if os.path.isfile(fullpath):
+                            os.remove(fullpath)
+                            if not os.path.isfile(fullpath):
+                                self.__sock.send(str("ACTION_DELETED " + _file).encode())
+                                buf, command = self.__read_command()
+                                continue
+                        else:
+                            self.__sock.send(str("ACTION_DELETED " + _file).encode())
+                            buf, command = self.__read_command()
+                            continue
+                    elif _info['required_sync'] == 'UPDATE':
+                        _parent_dir = os.path.dirname(fullpath)
+                        print("_parent_dir", _parent_dir)
+                        os.makedirs(_parent_dir, exist_ok=True)
+                        self.__sock.send(str("ACTION_SEND_ME_FILE " + _file).encode())
+                        if not self.__receive_file(fullpath, _info["md5"], _info["size"], send_buffer_size):
+                            break
+                        buf, command = self.__read_command()
+                self.__sock.send(str("ACTIONS_COMPLETED").encode())
             elif command == "CACHE_SIZE":
                 cache_size = buf[len("CACHE_SIZE "):]
                 cache_size = int(cache_size)
@@ -121,6 +162,14 @@ class Connect(threading.Thread):
             elif command == "CACHE_SEND":
                 self.__sock.send("ACCEPTED".encode())
                 self.__receive_file("test", cache_md5, cache_size, send_buffer_size)
+                if os.path.isfile("test"):
+                    with open("test", encoding="utf-8") as _file:
+                        try:
+                            cache = yaml.safe_load(_file)
+                            os.remove("test")
+                        except yaml.YAMLError as exc:
+                            print(exc)
+                            break
             elif command == "get":
                 self.__process_command_get()
             elif command == "delete":
@@ -130,6 +179,9 @@ class Connect(threading.Thread):
                 print("FAIL: unknown command [" + command + "]")
                 self.__sock.send(resp.encode())
                 break
+        self.__close_socket()
+
+    def __close_socket(self):
         self.__is_kill = True
         self.__sock.close()
         thrs.remove(self)
