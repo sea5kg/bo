@@ -49,7 +49,7 @@ def md5_by_file(filepath):
     return md5.hexdigest()
 
 
-class Connect(threading.Thread):
+class BoSocketHandler(threading.Thread):
     """
         handler for process connection in different thread
     """
@@ -206,7 +206,7 @@ thrs = []
 try:
     while True:
         sock, addr = s.accept()
-        thr = Connect(sock, addr)
+        thr = BoSocketHandler(sock, addr)
         thrs.append(thr)
         thr.start()
 except KeyboardInterrupt:
