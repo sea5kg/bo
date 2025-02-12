@@ -116,9 +116,9 @@ class BoFilesCache:
             with open(self.__cache_path, encoding="utf-8") as _file:
                 try:
                     self.__files = yaml.safe_load(_file)
-                except yaml.YAMLError as exc:
-                    print(exc)
-                    sys.exit(exc)
+                except yaml.YAMLError as _exc:
+                    print(_exc)
+                    sys.exit(_exc)
 
     def resave_cache(self):
         """ resave file """
@@ -147,6 +147,9 @@ class BoFilesCache:
         """ update file info """
         for _key in _info:
             self.__files[_file][_key] = _info[_key]
+        if 'version' not in self.__files[_file]:
+            self.__files[_file]['version'] = 0
+        self.__files[_file]['version'] += 1
 
     def remove(self, _file):
         """ remove file from list """
@@ -155,6 +158,86 @@ class BoFilesCache:
     def get_files(self):
         """ return all the file list """
         return self.__files
+
+
+class BoSocketClient:
+    """ Implementation for clietn protocol """
+    def __init__(self, config, files):
+        self.__config = config
+        self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
+        self.__files = files
+
+    def check_connection(self):
+        """ check connection """
+        try:
+            print("Check connecting... " + self.__hostport)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            sock.connect((self.__config['server_host'], self.__config['server_port']))
+            _ = sock.recv(1024).decode("utf-8")
+            sock.close()
+        except socket.timeout:
+            return False
+        except socket.error as serr:
+            if serr.errno == errno.ECONNREFUSED:
+                return False
+            print(serr)
+            return False
+        except Exception as err:  # pylint: disable=broad-except
+            fatal(112, "Exception is " + str(err))
+        return True
+
+    def run_sync(self):
+        """ run sync """
+        cache_md5 = md5_by_file(self.__config['cache_path'])
+        cache_size = os.path.getsize(self.__config['cache_path'])
+        try:
+            print("Connecting... " + self.__hostport)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            sock.connect((self.__config['server_host'], self.__config['server_port']))
+            _ = sock.recv(1024).decode("utf-8")
+            send_param(sock, "TARGET_DIR", self.__config['target_dir'])
+            send_param(sock, "CACHE_MD5", cache_md5)
+            send_param(sock, "CACHE_SIZE", cache_size)
+            send_param(sock, "SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
+            send_param(sock, "CACHE_SEND", 1)
+            print("Sending cache... ")
+            send_file(sock, self.__config['cache_path'])
+
+            _action = action_request(sock)
+            while _action != "ACTIONS_COMPLETED":
+                if _action.startswith("ACTION_DELETED "):
+                    _filename = _action[len("ACTION_DELETED "):]
+                    if self.__files.has(_filename):
+                        self.__files.remove(_filename)
+                    self.__files.resave_cache()
+                elif _action.startswith("ACTION_SEND_ME_FILE "):
+                    _file = _action[len("ACTION_SEND_ME_FILE "):]
+                    _fullpath = os.path.join(CURRENT_DIR, _file)
+                    send_file(sock, _fullpath)
+                    self.__files.update(_file, {"required_sync": "NONE"})
+                else:
+                    print("ERROR UNKNOWN ACTION -> ", _action)
+
+                _action = action_request(sock)
+            self.__files.resave_cache()
+
+            # _ = s.recv(1024).decode("utf-8")
+            # s.send(str(flag + "\n").encode())
+            # _ = s.recv(1024).decode("utf-8")
+            sock.close()
+        except socket.timeout:
+            fatal(8, "Socket timeout")
+        except socket.error as serr:
+            if serr.errno == errno.ECONNREFUSED:
+                fatal(9, "Connection refused")
+            else:
+                print(serr)
+                fatal(10, "Socker error " + str(serr))
+        except Exception as err:  # pylint: disable=broad-except
+            fatal(11, "Exception is " + str(err))
+        sys.exit(0)
 
 
 def send_param(_sock, name, value):
@@ -360,54 +443,12 @@ if SUBCOMMANDS[0] == "sync":
     start = time.time()
     print("Updating cache...")
     FILES.resave_cache()
-    CACHE_MD5 = md5_by_file(cache_path)
-    cache_size = os.path.getsize(cache_path)
     end = time.time()
     print("Done. Elapsed ", end - start, "sec")
-    try:
-        print("Connecting... " + SERVER_HOST + ":" + str(SERVER_PORT))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        sock.connect((SERVER_HOST, SERVER_PORT))
-        _ = sock.recv(1024).decode("utf-8")
-        send_param(sock, "TARGET_DIR", TARGET_DIR)
-        send_param(sock, "CACHE_MD5", CACHE_MD5)
-        send_param(sock, "CACHE_SIZE", cache_size)
-        send_param(sock, "SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
-        send_param(sock, "CACHE_SEND", 1)
-        print("Sending cache... ")
-        send_file(sock, cache_path)
-
-        _action = action_request(sock)
-        while _action != "ACTIONS_COMPLETED":
-            if _action.startswith("ACTION_DELETED "):
-                _filename = _action[len("ACTION_DELETED "):]
-                if FILES.has(_filename):
-                    FILES.remove(_filename)
-                FILES.resave_cache()
-            elif _action.startswith("ACTION_SEND_ME_FILE "):
-                _file = _action[len("ACTION_SEND_ME_FILE "):]
-                fullpath = os.path.join(CURRENT_DIR, _file)
-                send_file(sock, fullpath)
-                FILES.update(_file, {"required_sync": "NONE"})
-            else:
-                print("ERROR UNKNOWN ACTION -> ", _action)
-
-            _action = action_request(sock)
-        FILES.resave_cache()
-
-        # _ = s.recv(1024).decode("utf-8")
-        # s.send(str(flag + "\n").encode())
-        # _ = s.recv(1024).decode("utf-8")
-        sock.close()
-    except socket.timeout:
-        fatal(8, "Socket timeout")
-    except socket.error as serr:
-        if serr.errno == errno.ECONNREFUSED:
-            fatal(9, "Connection refused")
-        else:
-            print(serr)
-            fatal(10, "Socker error " + str(serr))
-    except Exception as err:  # pylint: disable=broad-except
-        fatal(11, "Exception is " + str(err))
-    sys.exit(0)
+    client = BoSocketClient({
+        "cache_path": cache_path,
+        "target_dir": TARGET_DIR,
+        "server_host": SERVER_HOST,
+        "server_port": SERVER_PORT,
+    }, FILES)
+    client.run_sync()

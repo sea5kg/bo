@@ -57,6 +57,8 @@ class BoSocketHandler(threading.Thread):
         self.__sock = _sock
         self.__addr = _addr
         self.__is_kill = False
+        self.__send_buffer_size = 512
+        self.__options = {}
         # self.__dir_flags = os.path.dirname(os.path.abspath(__file__))
         # self.__dir_flags += '/flags/'
         # self.__dir_flags = os.path.normpath(self.__dir_flags)
@@ -65,16 +67,16 @@ class BoSocketHandler(threading.Thread):
 
         threading.Thread.__init__(self)
 
-    def __receive_file(self, filepath, file_md5, file_size, buf_size):
+    def __receive_file(self, filepath, file_md5, file_size):
         """ __process_command_get """
         print(
             "Receiving file... " + filepath + " (" + str(file_size) + " bytes) " +
-            "per " + str(buf_size) + " bytes"
+            "per " + str(self.__send_buffer_size) + " bytes"
         )
         _received_bytes = 0
         with open(filepath, 'wb') as _file:
             while _received_bytes < file_size:
-                data = self.__sock.recv(buf_size)
+                data = self.__sock.recv(self.__send_buffer_size)
                 if len(data) > 0:
                     _received_bytes += len(data)
                     _file.write(data)
@@ -99,15 +101,28 @@ class BoSocketHandler(threading.Thread):
         command = re.search(r"\w*", buf).group()
         return buf, command
 
+    def __handle_command_target_dir(self, buf, command):
+        if command == "TARGET_DIR":
+            self.__options["target_dir"] = buf[len("TARGET_DIR "):]
+            print("target_dir: '" + self.__options["target_dir"] + "'")
+            self.__sock.send(str("ACCEPTED " + self.__options["target_dir"]).encode())
+
+    def __handle_command_cache_md5(self, buf, command):
+        if command == "CACHE_MD5":
+            self.__options["cache_md5"] = buf[len("CACHE_MD5 "):]
+            print("cache_md5: " + self.__options["cache_md5"])
+            self.__sock.send(str("ACCEPTED " + self.__options["cache_md5"]).encode())
+
     def run(self):
         welcome_s = "Welcome to bo server\n"
         welcome_s += "target_dir? "
         self.__sock.send(welcome_s.encode())
-        target_dir = None
-        cache_md5 = None
         cache_size = None
-        send_buffer_size = None
         cache = {}
+        handlers = {
+            "TARGET_DIR": self.__handle_command_target_dir,
+            "CACHE_MD5": self.__handle_command_cache_md5,
+        }
         # ptrn = re.compile(r""".*(?P<name>\w*?).*""", re.VERBOSE)
         while True:
             if self.__is_kill is True:
@@ -116,19 +131,13 @@ class BoSocketHandler(threading.Thread):
             if command is None:
                 break
             # print(buf)
-            if command == "TARGET_DIR":
-                target_dir = buf[len("TARGET_DIR "):]
-                print("target_dir: '" + target_dir + "'")
-                self.__sock.send(str("ACCEPTED " + target_dir).encode())
-            elif command == "CACHE_MD5":
-                cache_md5 = buf[len("CACHE_MD5 "):]
-                print("cache_md5: " + cache_md5)
-                self.__sock.send(str("ACCEPTED " + cache_md5).encode())
+            if command in handlers:
+                handlers[command](buf, command)
             elif command == "ACTION_REQUEST":
                 for _file in cache:
                     _info = cache[_file]
                     print(_file, _info)
-                    fullpath = os.path.join(target_dir, _file)
+                    fullpath = os.path.join(self.__options["target_dir"], _file)
                     if _info['required_sync'] == 'DELETE':
                         if os.path.isfile(fullpath):
                             os.remove(fullpath)
@@ -145,7 +154,7 @@ class BoSocketHandler(threading.Thread):
                         print("_parent_dir", _parent_dir)
                         os.makedirs(_parent_dir, exist_ok=True)
                         self.__sock.send(str("ACTION_SEND_ME_FILE " + _file).encode())
-                        if not self.__receive_file(fullpath, _info["md5"], _info["size"], send_buffer_size):
+                        if not self.__receive_file(fullpath, _info["md5"], _info["size"]):
                             break
                         buf, command = self.__read_command()
                 self.__sock.send(str("ACTIONS_COMPLETED").encode())
@@ -156,12 +165,12 @@ class BoSocketHandler(threading.Thread):
                 self.__sock.send(str("ACCEPTED " + str(cache_size)).encode())
             elif command == "SEND_BUFFER_SIZE":
                 send_buffer_size = buf[len("SEND_BUFFER_SIZE "):]
-                send_buffer_size = int(send_buffer_size)
-                print("send_buffer_size: " + str(send_buffer_size))
-                self.__sock.send(str("ACCEPTED " + str(send_buffer_size)).encode())
+                self.__send_buffer_size = int(send_buffer_size)
+                print("send_buffer_size: " + str(self.__send_buffer_size))
+                self.__sock.send(str("ACCEPTED " + str(self.__send_buffer_size)).encode())
             elif command == "CACHE_SEND":
                 self.__sock.send("ACCEPTED".encode())
-                self.__receive_file("test", cache_md5, cache_size, send_buffer_size)
+                self.__receive_file("test", self.__options["cache_md5"], cache_size)
                 if os.path.isfile("test"):
                     with open("test", encoding="utf-8") as _file:
                         try:
