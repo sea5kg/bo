@@ -11,6 +11,7 @@ Usage:
     'bo config ls' - print configs
     'bo config path' - path to config file
     'bo sync' - partial sync to remote server
+    'bo server' - partial sync to remote server
 ```
 
 
@@ -34,9 +35,9 @@ $ sudo ln -s ~/bo.git /usr/bin/bo
 
 ## How to use
 
-### Run bo_server.py
+### Run bo server
 
-On target virtual machine start `bo_server.py`
+On target virtual machine start `bo server`
 
 ### Configure project sync on current machine
 

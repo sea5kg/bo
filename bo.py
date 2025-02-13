@@ -30,6 +30,8 @@ import os
 import sys
 import time
 import socket
+import re
+import threading
 import errno
 import hashlib
 from pathlib import Path
@@ -289,6 +291,198 @@ class BoSocketClient:
         sys.exit(0)
 
 
+
+class BoServerSocketHandler(threading.Thread):
+    """
+        handler for process connection in different thread
+    """
+    def __init__(self, _sock, _addr, _server):
+        self.__sock = _sock
+        self.__addr = _addr
+        self.__is_kill = False
+        self.__send_buffer_size = 512
+        self.__options = {}
+        self.__server = _server
+        # self.__dir_flags = os.path.dirname(os.path.abspath(__file__))
+        # self.__dir_flags += '/flags/'
+        # self.__dir_flags = os.path.normpath(self.__dir_flags)
+        # if not os.path.exists(self.__dir_flags):
+        #     os.makedirs(self.__dir_flags)
+
+        threading.Thread.__init__(self)
+
+    def __receive_file(self, filepath, file_md5, file_size):
+        """ __process_command_get """
+        print(
+            "Receiving file... " + filepath + " (" + str(file_size) + " bytes) " +
+            "per " + str(self.__send_buffer_size) + " bytes"
+        )
+        _received_bytes = 0
+        with open(filepath, 'wb') as _file:
+            while _received_bytes < file_size:
+                data = self.__sock.recv(self.__send_buffer_size)
+                if len(data) > 0:
+                    _received_bytes += len(data)
+                    _file.write(data)
+                else:
+                    break
+        got_file_md5 = md5_by_file(filepath)
+        if file_md5 != got_file_md5:
+            self.__sock.send("WRONG_MD5".encode())
+            print("WRONG_MD5")
+            print("Expected: " + file_md5)
+            print("Got: " + got_file_md5)
+            return False
+        print("Done")
+        self.__sock.send("ACCEPTED".encode())
+        return True
+
+    def __read_command(self):
+        buf = self.__sock.recv(1024).decode("utf-8").strip()
+        if buf == "":
+            return None, None
+        # print(buf)
+        command = re.search(r"\w*", buf).group()
+        return buf, command
+
+    def __handle_command_target_dir(self, buf, command):
+        if command == "TARGET_DIR":
+            self.__options["target_dir"] = buf[len("TARGET_DIR "):]
+            print("target_dir: '" + self.__options["target_dir"] + "'")
+            self.__sock.send(str("ACCEPTED " + self.__options["target_dir"]).encode())
+
+    def __handle_command_cache_md5(self, buf, command):
+        if command == "CACHE_MD5":
+            self.__options["cache_md5"] = buf[len("CACHE_MD5 "):]
+            print("cache_md5: " + self.__options["cache_md5"])
+            self.__sock.send(str("ACCEPTED " + self.__options["cache_md5"]).encode())
+
+    def run(self):
+        welcome_s = "Welcome to bo server\n"
+        welcome_s += "target_dir? "
+        self.__sock.send(welcome_s.encode())
+        cache_size = None
+        cache = {}
+        handlers = {
+            "TARGET_DIR": self.__handle_command_target_dir,
+            "CACHE_MD5": self.__handle_command_cache_md5,
+        }
+        # ptrn = re.compile(r""".*(?P<name>\w*?).*""", re.VERBOSE)
+        while True:
+            if self.__is_kill is True:
+                break
+            buf, command = self.__read_command()
+            if command is None:
+                break
+            # print(buf)
+            if command in handlers:
+                handlers[command](buf, command)
+            elif command == "ACTION_REQUEST":
+                for _file in cache:
+                    _info = cache[_file]
+                    print(_file, _info)
+                    _fullpath = os.path.join(self.__options["target_dir"], _file)
+                    if _info['required_sync'] == 'DELETE':
+                        if os.path.isfile(_fullpath):
+                            os.remove(_fullpath)
+                            if not os.path.isfile(_fullpath):
+                                self.__sock.send(str("ACTION_DELETED " + _file).encode())
+                                buf, command = self.__read_command()
+                                continue
+                        else:
+                            self.__sock.send(str("ACTION_DELETED " + _file).encode())
+                            buf, command = self.__read_command()
+                            continue
+                    elif _info['required_sync'] == 'UPDATE':
+                        _parent_dir = os.path.dirname(_fullpath)
+                        print("_parent_dir", _parent_dir)
+                        os.makedirs(_parent_dir, exist_ok=True)
+                        self.__sock.send(str("ACTION_SEND_ME_FILE " + _file).encode())
+                        if not self.__receive_file(_fullpath, _info["md5"], _info["size"]):
+                            break
+                        buf, command = self.__read_command()
+                self.__sock.send(str("ACTIONS_COMPLETED").encode())
+            elif command == "CACHE_SIZE":
+                cache_size = buf[len("CACHE_SIZE "):]
+                cache_size = int(cache_size)
+                print("cache_size: " + buf)
+                self.__sock.send(str("ACCEPTED " + str(cache_size)).encode())
+            elif command == "SEND_BUFFER_SIZE":
+                send_buffer_size = buf[len("SEND_BUFFER_SIZE "):]
+                self.__send_buffer_size = int(send_buffer_size)
+                print("send_buffer_size: " + str(self.__send_buffer_size))
+                self.__sock.send(str("ACCEPTED " + str(self.__send_buffer_size)).encode())
+            elif command == "CACHE_SEND":
+                self.__sock.send("ACCEPTED".encode())
+                self.__receive_file("test", self.__options["cache_md5"], cache_size)
+                if os.path.isfile("test"):
+                    with open("test", encoding="utf-8") as _file:
+                        try:
+                            cache = yaml.safe_load(_file)
+                            os.remove("test")
+                        except yaml.YAMLError as exc:
+                            print(exc)
+                            break
+            elif command == "get":
+                self.__process_command_get()
+            elif command == "delete":
+                self.__process_command_delete()
+            else:
+                resp = "\n [" + command + "] unknown command\n\n"
+                print("FAIL: unknown command [" + command + "]")
+                self.__sock.send(resp.encode())
+                break
+        self.__close_socket()
+
+    def __close_socket(self):
+        self.__is_kill = True
+        self.__sock.close()
+        self.__server.remove_thread(self)
+
+    def kill(self):
+        """ stop thread """
+        if self.__is_kill is True:
+            return
+        self.__is_kill = True
+        self.__sock.close()
+        # thrs.remove(self)
+
+
+class BoServer():
+    """
+        Server multitreading implementation
+    """
+    def __init__(self, host, port):
+        self.__host = host
+        self.__port = port
+        self.__thrs = []
+
+    def remove_thread(self, thrd):
+        """ remove from threads """
+        self.__thrs.remove(thrd)
+
+    def start(self):
+        """ start server """
+        _srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _srv_sock.bind((self.__host, self.__port))
+        _srv_sock.listen(10)
+
+        print('Start service listening ' + self.__host + ':' + str(self.__port))
+
+        try:
+            while True:
+                _cli_sock, addr = _srv_sock.accept()
+                thr = BoServerSocketHandler(_cli_sock, addr, self)
+                self.__thrs.append(thr)
+                thr.start()
+        except KeyboardInterrupt:
+            print('Bye! Write me letters!')
+            _srv_sock.close()
+            for thr in self.__thrs:
+                thr.kill()
+
+
 if os.path.isfile(BO_CONFIG_FILEPATH):
     with open(BO_CONFIG_FILEPATH, encoding="utf-8") as _file:
         try:
@@ -321,6 +515,7 @@ if "help" in SUBCOMMANDS:
         "    'bo config ls' - print configs\n"
         "    'bo config path' - path to config file\n"
         "    'bo sync' - partial sync to remote server\n"
+        "    'bo server' - start server\n"
         "\n"
     )
     sys.exit(0)
@@ -451,3 +646,7 @@ if SUBCOMMANDS[0] == "sync":
         "server_port": SERVER_PORT,
     }, FILES)
     client.run_sync()
+
+if SUBCOMMANDS[0] == "server":
+    bo_server = BoServer("", 4319)
+    bo_server.start()
