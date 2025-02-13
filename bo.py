@@ -166,6 +166,7 @@ class BoSocketClient:
         self.__config = config
         self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
         self.__files = files
+        self.__sock = None
 
     def check_connection(self):
         """ check connection """
@@ -187,25 +188,72 @@ class BoSocketClient:
             fatal(112, "Exception is " + str(err))
         return True
 
+    def __send_param(self, name, value):
+        """ send command """
+        name = name.strip()
+        value = str(value).strip()
+        command = name + " " + value
+        command = command.strip()
+        print(command)
+        command += "\n"
+        self.__sock.send(command.encode())
+        resp = self.__sock.recv(1024).decode("utf-8")
+        accepted = ""
+        if len(resp) >= 8:
+            accepted = resp[:8]
+        # LATER: check value
+        if accepted != "ACCEPTED":
+            fatal(7, "Expected [ACCEPTED] but got [" + str(resp) + "]")
+        print(resp)
+
+    def __action_request(self):
+        """ action_request """
+        command = "ACTION_REQUEST"
+        print(command)
+        command += "\n"
+        self.__sock.send(command.encode())
+        resp = self.__sock.recv(1024).decode("utf-8")
+        resp = resp.strip()
+        print(resp)
+        return resp
+
+    def __send_file(self, _filepath):
+        """ send file """
+        print("SEND FILE " + _filepath)
+        with open(_filepath, 'rb') as _file:
+            while True:
+                data = _file.read(SEND_BUFFER_SIZE)
+                if not data:
+                    break
+                self.__sock.send(data)
+        self.__sock.send("".encode())
+        resp = self.__sock.recv(1024).decode("utf-8")
+        accepted = ""
+        if len(resp) >= 8:
+            accepted = resp[:8]
+        if accepted != "ACCEPTED":
+            fatal(8, "Expected [ACCEPTED] but got [" + str(resp) + "]")
+        print(resp)
+
     def run_sync(self):
         """ run sync """
         cache_md5 = md5_by_file(self.__config['cache_path'])
         cache_size = os.path.getsize(self.__config['cache_path'])
         try:
             print("Connecting... " + self.__hostport)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            sock.connect((self.__config['server_host'], self.__config['server_port']))
-            _ = sock.recv(1024).decode("utf-8")
-            send_param(sock, "TARGET_DIR", self.__config['target_dir'])
-            send_param(sock, "CACHE_MD5", cache_md5)
-            send_param(sock, "CACHE_SIZE", cache_size)
-            send_param(sock, "SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
-            send_param(sock, "CACHE_SEND", 1)
+            self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.__sock.settimeout(1)
+            self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
+            _ = self.__sock.recv(1024).decode("utf-8")
+            self.__send_param("TARGET_DIR", self.__config['target_dir'])
+            self.__send_param("CACHE_MD5", cache_md5)
+            self.__send_param("CACHE_SIZE", cache_size)
+            self.__send_param("SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
+            self.__send_param("CACHE_SEND", 1)
             print("Sending cache... ")
-            send_file(sock, self.__config['cache_path'])
+            self.__send_file(self.__config['cache_path'])
 
-            _action = action_request(sock)
+            _action = self.__action_request()
             while _action != "ACTIONS_COMPLETED":
                 if _action.startswith("ACTION_DELETED "):
                     _filename = _action[len("ACTION_DELETED "):]
@@ -215,18 +263,18 @@ class BoSocketClient:
                 elif _action.startswith("ACTION_SEND_ME_FILE "):
                     _file = _action[len("ACTION_SEND_ME_FILE "):]
                     _fullpath = os.path.join(CURRENT_DIR, _file)
-                    send_file(sock, _fullpath)
+                    self.__send_file(_fullpath)
                     self.__files.update(_file, {"required_sync": "NONE"})
                 else:
                     print("ERROR UNKNOWN ACTION -> ", _action)
 
-                _action = action_request(sock)
+                _action = self.__action_request()
             self.__files.resave_cache()
 
             # _ = s.recv(1024).decode("utf-8")
             # s.send(str(flag + "\n").encode())
             # _ = s.recv(1024).decode("utf-8")
-            sock.close()
+            self.__sock.close()
         except socket.timeout:
             fatal(8, "Socket timeout")
         except socket.error as serr:
@@ -237,57 +285,8 @@ class BoSocketClient:
                 fatal(10, "Socker error " + str(serr))
         except Exception as err:  # pylint: disable=broad-except
             fatal(11, "Exception is " + str(err))
+            # self.__sock = None
         sys.exit(0)
-
-
-def send_param(_sock, name, value):
-    """ send command """
-    name = name.strip()
-    value = str(value).strip()
-    command = name + " " + value
-    command = command.strip()
-    print(command)
-    command += "\n"
-    _sock.send(command.encode())
-    resp = _sock.recv(1024).decode("utf-8")
-    accepted = ""
-    if len(resp) >= 8:
-        accepted = resp[:8]
-    # LATER: check value
-    if accepted != "ACCEPTED":
-        fatal(7, "Expected [ACCEPTED] but got [" + str(resp) + "]")
-    print(resp)
-
-
-def action_request(_sock):
-    """ action_request """
-    command = "ACTION_REQUEST"
-    print(command)
-    command += "\n"
-    _sock.send(command.encode())
-    resp = _sock.recv(1024).decode("utf-8")
-    resp = resp.strip()
-    print(resp)
-    return resp
-
-
-def send_file(_sock: socket.socket, _filepath):
-    """ send file """
-    print("SEND FILE " + _filepath)
-    with open(_filepath, 'rb') as _file:
-        while True:
-            data = _file.read(SEND_BUFFER_SIZE)
-            if not data:
-                break
-            _sock.send(data)
-    _sock.send("".encode())
-    resp = _sock.recv(1024).decode("utf-8")
-    accepted = ""
-    if len(resp) >= 8:
-        accepted = resp[:8]
-    if accepted != "ACCEPTED":
-        fatal(8, "Expected [ACCEPTED] but got [" + str(resp) + "]")
-    print(resp)
 
 
 if os.path.isfile(BO_CONFIG_FILEPATH):
