@@ -175,7 +175,7 @@ class BoSocketClient:
         try:
             print("Check connecting... " + self.__hostport)
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
+            sock.settimeout(15)
             sock.connect((self.__config['server_host'], self.__config['server_port']))
             _ = sock.recv(1024).decode("utf-8")
             sock.close()
@@ -244,7 +244,7 @@ class BoSocketClient:
         try:
             print("Connecting... " + self.__hostport)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.__sock.settimeout(1)
+            self.__sock.settimeout(15)
             self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
             _ = self.__sock.recv(1024).decode("utf-8")
             self.__send_param("TARGET_DIR", self.__config['target_dir'])
@@ -291,6 +291,34 @@ class BoSocketClient:
         sys.exit(0)
 
 
+class BoCommand:
+    """ Command like SOME ...value """
+    def __init__(self, buf=None):
+        self.__command = None
+        self.__value = None
+        self.parse(buf)
+
+    def parse(self, buf):
+        """ parse command from buf """
+        if buf is None or buf == "":
+            self.__command = None
+            self.__value = None
+            return
+        self.__command = re.search(r"\w*", buf).group()
+        if len(buf) <= len(self.__command):
+            self.__value = ""
+        else:
+            self.__value = buf[len(self.__command + " "):]
+            self.__value = self.__value.strip()
+
+    def get_value(self):
+        """ return value from command but if not so return empty string """
+        return self.__value
+
+    def get_command(self):
+        """ return command name """
+        return self.__command
+
 
 class BoServerSocketHandler(threading.Thread):
     """
@@ -303,12 +331,8 @@ class BoServerSocketHandler(threading.Thread):
         self.__send_buffer_size = 512
         self.__options = {}
         self.__server = _server
-        # self.__dir_flags = os.path.dirname(os.path.abspath(__file__))
-        # self.__dir_flags += '/flags/'
-        # self.__dir_flags = os.path.normpath(self.__dir_flags)
-        # if not os.path.exists(self.__dir_flags):
-        #     os.makedirs(self.__dir_flags)
-
+        self.__cache = {}
+        print("Connected from " + str(self.__addr))
         threading.Thread.__init__(self)
 
     def __receive_file(self, filepath, file_md5, file_size):
@@ -337,99 +361,116 @@ class BoServerSocketHandler(threading.Thread):
         self.__sock.send("ACCEPTED".encode())
         return True
 
-    def __read_command(self):
+    def __read_command(self, command: BoCommand):
         buf = self.__sock.recv(1024).decode("utf-8").strip()
+        print("buf=", buf)
         if buf == "":
-            return None, None
+            command.parse(None)
         # print(buf)
-        command = re.search(r"\w*", buf).group()
-        return buf, command
+        command.parse(buf)
 
-    def __handle_command_target_dir(self, buf, command):
-        if command == "TARGET_DIR":
-            self.__options["target_dir"] = buf[len("TARGET_DIR "):]
+    def __handle_command_target_dir(self, command):
+        if command.get_command() == "TARGET_DIR":
+            self.__options["target_dir"] = command.get_value()
             print("target_dir: '" + self.__options["target_dir"] + "'")
             self.__sock.send(str("ACCEPTED " + self.__options["target_dir"]).encode())
+        return True
 
-    def __handle_command_cache_md5(self, buf, command):
-        if command == "CACHE_MD5":
-            self.__options["cache_md5"] = buf[len("CACHE_MD5 "):]
+    def __handle_command_cache_md5(self, command):
+        if command.get_command() == "CACHE_MD5":
+            self.__options["cache_md5"] = command.get_value()
             print("cache_md5: " + self.__options["cache_md5"])
             self.__sock.send(str("ACCEPTED " + self.__options["cache_md5"]).encode())
+        return True
+
+    def __handle_command_cache_size(self, command):
+        if command.get_command() == "CACHE_SIZE":
+            self.__options["cache_size"] = command.get_value()
+            self.__options["cache_size"] = int(self.__options["cache_size"])
+            print("cache_size: " + str(self.__options["cache_size"]))
+            self.__sock.send(str("ACCEPTED " + str(self.__options["cache_size"])).encode())
+        return True
+
+    def __handle_command_send_buffer_size(self, command):
+        if command.get_command() == "SEND_BUFFER_SIZE":
+            self.__send_buffer_size = command.get_value()
+            self.__send_buffer_size = int(self.__send_buffer_size)
+            print("send_buffer_size: " + str(self.__send_buffer_size))
+            self.__sock.send(str("ACCEPTED " + str(self.__send_buffer_size)).encode())
+        return True
+
+    def __handle_command_cache_send(self, command):
+        if command.get_command() == "CACHE_SEND":
+            self.__sock.send("ACCEPTED".encode())
+            self.__receive_file(
+                "test", self.__options["cache_md5"],
+                self.__options["cache_size"]
+            )
+            if os.path.isfile("test"):
+                with open("test", encoding="utf-8") as _file:
+                    try:
+                        self.__cache = yaml.safe_load(_file)
+                    except yaml.YAMLError as _exc:
+                        print(_exc)
+                        self.__sock.send("FAILED".encode())
+                        return False
+                os.remove("test")
+        return True
+
+    def __handle_command_action_request(self, command):
+        if command.get_command() == "ACTION_REQUEST":
+            for _file, _info in self.__cache.items():
+                print(_file, _info)
+                _fullpath = os.path.join(self.__options["target_dir"], _file)
+                if _info['required_sync'] == 'DELETE':
+                    if os.path.isfile(_fullpath):
+                        os.remove(_fullpath)
+                        if not os.path.isfile(_fullpath):
+                            self.__sock.send(str("ACTION_DELETED " + _file).encode())
+                            self.__read_command(command)
+                            continue
+                    else:
+                        self.__sock.send(str("ACTION_DELETED " + _file).encode())
+                        self.__read_command(command)
+                        continue
+                elif _info['required_sync'] == 'UPDATE':
+                    _parent_dir = os.path.dirname(_fullpath)
+                    print("_parent_dir", _parent_dir)
+                    os.makedirs(_parent_dir, exist_ok=True)
+                    self.__sock.send(str("ACTION_SEND_ME_FILE " + _file).encode())
+                    if not self.__receive_file(_fullpath, _info["md5"], _info["size"]):
+                        break
+                    self.__read_command(command)
+            self.__sock.send(str("ACTIONS_COMPLETED").encode())
+        return True
 
     def run(self):
         welcome_s = "Welcome to bo server\n"
         welcome_s += "target_dir? "
         self.__sock.send(welcome_s.encode())
-        cache_size = None
-        cache = {}
-        handlers = {
+        _handlers = {
             "TARGET_DIR": self.__handle_command_target_dir,
             "CACHE_MD5": self.__handle_command_cache_md5,
+            "SEND_BUFFER_SIZE": self.__handle_command_send_buffer_size,
+            "CACHE_SIZE": self.__handle_command_cache_size,
+            "CACHE_SEND": self.__handle_command_cache_send,
+            "ACTION_REQUEST": self.__handle_command_action_request,
         }
-        # ptrn = re.compile(r""".*(?P<name>\w*?).*""", re.VERBOSE)
+        command = BoCommand()
         while True:
             if self.__is_kill is True:
                 break
-            buf, command = self.__read_command()
-            if command is None:
+            self.__read_command(command)
+            if command.get_command() is None:
+                print("command is none. break")
                 break
-            # print(buf)
-            if command in handlers:
-                handlers[command](buf, command)
-            elif command == "ACTION_REQUEST":
-                for _file in cache:
-                    _info = cache[_file]
-                    print(_file, _info)
-                    _fullpath = os.path.join(self.__options["target_dir"], _file)
-                    if _info['required_sync'] == 'DELETE':
-                        if os.path.isfile(_fullpath):
-                            os.remove(_fullpath)
-                            if not os.path.isfile(_fullpath):
-                                self.__sock.send(str("ACTION_DELETED " + _file).encode())
-                                buf, command = self.__read_command()
-                                continue
-                        else:
-                            self.__sock.send(str("ACTION_DELETED " + _file).encode())
-                            buf, command = self.__read_command()
-                            continue
-                    elif _info['required_sync'] == 'UPDATE':
-                        _parent_dir = os.path.dirname(_fullpath)
-                        print("_parent_dir", _parent_dir)
-                        os.makedirs(_parent_dir, exist_ok=True)
-                        self.__sock.send(str("ACTION_SEND_ME_FILE " + _file).encode())
-                        if not self.__receive_file(_fullpath, _info["md5"], _info["size"]):
-                            break
-                        buf, command = self.__read_command()
-                self.__sock.send(str("ACTIONS_COMPLETED").encode())
-            elif command == "CACHE_SIZE":
-                cache_size = buf[len("CACHE_SIZE "):]
-                cache_size = int(cache_size)
-                print("cache_size: " + buf)
-                self.__sock.send(str("ACCEPTED " + str(cache_size)).encode())
-            elif command == "SEND_BUFFER_SIZE":
-                send_buffer_size = buf[len("SEND_BUFFER_SIZE "):]
-                self.__send_buffer_size = int(send_buffer_size)
-                print("send_buffer_size: " + str(self.__send_buffer_size))
-                self.__sock.send(str("ACCEPTED " + str(self.__send_buffer_size)).encode())
-            elif command == "CACHE_SEND":
-                self.__sock.send("ACCEPTED".encode())
-                self.__receive_file("test", self.__options["cache_md5"], cache_size)
-                if os.path.isfile("test"):
-                    with open("test", encoding="utf-8") as _file:
-                        try:
-                            cache = yaml.safe_load(_file)
-                            os.remove("test")
-                        except yaml.YAMLError as exc:
-                            print(exc)
-                            break
-            elif command == "get":
-                self.__process_command_get()
-            elif command == "delete":
-                self.__process_command_delete()
+            if command.get_command() in _handlers:
+                if not _handlers[command.get_command()](command):
+                    print("command is failed. break")
+                    break
             else:
-                resp = "\n [" + command + "] unknown command\n\n"
-                print("FAIL: unknown command [" + command + "]")
+                resp = "\n '" + command.get_command() + "' unknown command\n\n"
+                print("FAIL: unknown command '" + command.get_command() + "'")
                 self.__sock.send(resp.encode())
                 break
         self.__close_socket()
