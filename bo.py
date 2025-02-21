@@ -555,6 +555,7 @@ if "help" in SUBCOMMANDS:
         "    'bo config init' - add current directory to config\n"
         "    'bo config deinit' - remove current directory from config\n"
         "    'bo config command' - Init command for current directory\n"
+        "    'bo config remove-command <cmd_name>' - Init command for current directory\n"
         "    'bo config ls' - print configs\n"
         "    'bo config path' - path to config file\n"
         "    'bo sync' - partial sync to remote server\n"
@@ -641,6 +642,24 @@ if SUBCOMMANDS[0] == "config":
                 break
             _cfg_cmds[COMMAND_NAME].append(COMMAND)
         BO_CONFIG["workdirs"][CURRENT_DIR]["commands"] = _cfg_cmds
+        resave_config()
+        print("Done.")
+        sys.exit(0)
+    elif SUBCOMMANDS[1] == "remove-command":
+        command_name = SUBCOMMANDS[2]
+        if command_name == "":
+            fatal(
+                110,
+                "Expected name of command for remove, like " +
+                "'bo config remove-command cmd_name' replace cmd_name to your existing command"
+            )
+        if CURRENT_DIR not in BO_CONFIG["workdirs"]:
+            fatal(111, "Not initialized current directory: " + CURRENT_DIR)
+        if "commands" not in BO_CONFIG["workdirs"][CURRENT_DIR]:
+            BO_CONFIG["workdirs"][CURRENT_DIR]["commands"] = {}
+        if command_name not in BO_CONFIG["workdirs"][CURRENT_DIR]["commands"]:
+            fatal(112, "Not found registered command " + command_name)
+        del BO_CONFIG["workdirs"][CURRENT_DIR]["commands"][command_name]
         resave_config()
         print("Done.")
         sys.exit(0)
