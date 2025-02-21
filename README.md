@@ -32,12 +32,12 @@ $ git clone https://github.com/sea5kg/bo.git ~/bo.git
 $ sudo ln -s ~/bo.git /usr/bin/bo
 ```
 
-
 ## How to use
 
 ### Run bo server
 
-On target virtual machine start `bo server`
+1. Install bo on target virtual machine
+2. Start `bo server` or `python -u bo.py server`
 
 ### Configure project sync on current machine
 

@@ -264,7 +264,7 @@ class BoSocketClient:
                     self.__files.resave_cache()
                 elif _action.startswith("ACTION_SEND_ME_FILE "):
                     _file = _action[len("ACTION_SEND_ME_FILE "):]
-                    _fullpath = os.path.join(CURRENT_DIR, _file)
+                    _fullpath = os.path.join(BO_WORKDIR, _file)
                     self.__send_file(_fullpath)
                     self.__files.update(_file, {"required_sync": "NONE"})
                 else:
@@ -539,6 +539,8 @@ if "workdirs" not in BO_CONFIG:
 # print(BO_HOME_CONFIG_DIR)
 # print(CURRENT_DIR)
 
+RESERVED_SUBCOMMAND_0 = ["config", "sync", "server"]
+
 SUBCOMMANDS = []
 i = 1  # skip first element
 while i < len(sys.argv):
@@ -561,16 +563,29 @@ if "help" in SUBCOMMANDS:
     )
     sys.exit(0)
 
+BO_WORKDIR = None
+TMP_CURRENT_DIR = CURRENT_DIR
+while len(TMP_CURRENT_DIR) > 0:
+    if TMP_CURRENT_DIR in BO_CONFIG["workdirs"]:
+        BO_WORKDIR = TMP_CURRENT_DIR
+        break
+    TMP_CURRENT_DIR = os.path.normpath(os.path.join(TMP_CURRENT_DIR, '..'))
+    if TMP_CURRENT_DIR == '/':
+        break
+
+if BO_WORKDIR is not None:
+    print("Found workdir in config: ", BO_WORKDIR)
+
 if SUBCOMMANDS[0] == "config":
     if SUBCOMMANDS[1] == "deinit":
-        if CURRENT_DIR not in BO_CONFIG["workdirs"]:
-            fatal(5, "Not found initialize diretory: " + CURRENT_DIR)
-        print("Removing " + CURRENT_DIR + " from config\n")
-        del BO_CONFIG["workdirs"][CURRENT_DIR]
+        if BO_WORKDIR is None:
+            fatal(5, "Not found initialize diretory: " + BO_WORKDIR)
+        print("Removing " + BO_WORKDIR + " from config\n")
+        del BO_CONFIG["workdirs"][BO_WORKDIR]
         resave_config()
         print("Done.")
     elif SUBCOMMANDS[1] == "init":
-        if CURRENT_DIR in BO_CONFIG["workdirs"]:
+        if BO_WORKDIR is not None:
             fatal(4, "Already initialized directory: " + CURRENT_DIR)
         SERVER0 = input("Server: ")
         TARGET_DIR = input("Target dir: ")
@@ -593,12 +608,30 @@ if SUBCOMMANDS[0] == "config":
         print("Done.")
         sys.exit(0)
     elif SUBCOMMANDS[1] == "command":
-        if CURRENT_DIR not in BO_CONFIG["workdirs"]:
+        if BO_WORKDIR is None:
             fatal(4, "Not initialized current directory: " + CURRENT_DIR)
-        if "commands" not in BO_CONFIG["workdirs"][CURRENT_DIR]:
-            BO_CONFIG["workdirs"][CURRENT_DIR]["commands"] = {}
-        _cfg_cmds = BO_CONFIG["workdirs"][CURRENT_DIR]["commands"]
-        COMMAND_NAME = input("Command Name: ")
+        if "commands" not in BO_CONFIG["workdirs"][BO_WORKDIR]:
+            BO_CONFIG["workdirs"][BO_WORKDIR]["commands"] = {}
+        _cfg_cmds = BO_CONFIG["workdirs"][BO_WORKDIR]["commands"]
+        COMMAND_NAME = SUBCOMMANDS[2]  # possible get from command line params
+        if COMMAND_NAME == "":
+            COMMAND_NAME = input("Command Name: ").strip()
+        else:
+            print("Command Name: " + COMMAND_NAME)
+        if COMMAND_NAME == "":
+            fatal(103, "Command '" + COMMAND_NAME + "' could not be empty")
+        if COMMAND_NAME in _cfg_cmds:
+            fatal(
+                104,
+                "Command '" + COMMAND_NAME + "' - alredy defined, please " +
+                "try another command or remove: 'bo config remove-command " + COMMAND_NAME + "'"
+            )
+        if COMMAND_NAME in RESERVED_SUBCOMMAND_0:
+            fatal(
+                105,
+                "Command '" + COMMAND_NAME + "' is reserved command name, " +
+                "please try again with another name"
+            )
         _cfg_cmds[COMMAND_NAME] = []
         NEW_COMMAND = "."
         while NEW_COMMAND != "":
@@ -627,19 +660,20 @@ if SUBCOMMANDS[0] == "config":
         print("BO_CONFIG_FILEPATH: " + BO_CONFIG_FILEPATH)
     else:
         fatal(3, "Unknown sub command '" + SUBCOMMANDS[1] + "'")
+    sys.exit(0)
 
 if SUBCOMMANDS[0] == "sync":
-    if CURRENT_DIR not in BO_CONFIG["workdirs"]:
+    if BO_WORKDIR is None:
         fatal(6, "Not found config for directory '" + CURRENT_DIR + "'")
     TO_SERVER = "base"
-    if SUBCOMMANDS[1] in BO_CONFIG["workdirs"][CURRENT_DIR]["servers"]:
+    if SUBCOMMANDS[1] in BO_CONFIG["workdirs"][BO_WORKDIR]["servers"]:
         TO_SERVER = SUBCOMMANDS[1]
-    cfg = BO_CONFIG["workdirs"][CURRENT_DIR]["servers"][TO_SERVER]
+    cfg = BO_CONFIG["workdirs"][BO_WORKDIR]["servers"][TO_SERVER]
     SERVER_HOST = cfg["host"]
     SERVER_PORT = cfg["port"]
     TARGET_DIR = cfg["target_dir"]
     print(
-        "Start syncing files\n    >from: " + CURRENT_DIR + " \n"
+        "Start syncing files\n    >from: " + BO_WORKDIR + " \n"
         "    >to: " + SERVER_HOST + ":" + str(SERVER_PORT)
     )
     cache_path = cfg["cache_path"]
@@ -647,10 +681,10 @@ if SUBCOMMANDS[0] == "sync":
 
     print("Scanning files...")
     start = time.time()
-    current_files = get_all_files(CURRENT_DIR)
+    current_files = get_all_files(BO_WORKDIR)
     _CHANGES = 0
     for _file in current_files:
-        fullpath = os.path.join(CURRENT_DIR, _file)
+        fullpath = os.path.join(BO_WORKDIR, _file)
         if not FILES.has(_file):
             FILES.add(_file, fullpath)
             _CHANGES += 1
