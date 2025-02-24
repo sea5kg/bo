@@ -17,6 +17,7 @@ Usage:
     'bo config ls' - print configs
     'bo config path' - path to config file
     'bo sync' - partial sync to remote server
+    'bo remote run <cmd> <arg1> <arg2> ... <argN>' - call command on remote host
     'bo server' - start server
 ```
 

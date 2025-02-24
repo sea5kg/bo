@@ -31,6 +31,9 @@ import sys
 import time
 import socket
 import re
+import platform
+import json
+import subprocess
 import threading
 import errno
 import hashlib
@@ -107,6 +110,16 @@ def md5_by_file(_filepath):
     return md5.hexdigest()
 
 
+def is_linux():
+    """ current system is linux? """
+    return platform.platform().lower().startswith("linux")
+
+
+def is_windows():
+    """ current system is windows? """
+    return platform.platform().lower().startswith("windows")
+
+
 class BoFilesCache:
     """ helper class for control of cache """
 
@@ -164,10 +177,9 @@ class BoFilesCache:
 
 class BoSocketClient:
     """ Implementation for clietn protocol """
-    def __init__(self, config, files):
+    def __init__(self, config):
         self.__config = config
         self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
-        self.__files = files
         self.__sock = None
 
     def check_connection(self):
@@ -219,6 +231,25 @@ class BoSocketClient:
         print(resp)
         return resp
 
+    def __output_request(self):
+        """ OUTPUT_request """
+        command = "OUTPUT_REQUEST"
+        # print(command)
+        command += "\n"
+        self.__sock.send(command.encode())
+        resp = self.__sock.recv(1024).decode("utf-8")
+        if resp.startswith("OUTPUT "):
+            print(resp[len("OUTPUT "):], end='', sep='')
+        if resp.startswith("OUTPUT_FINISHED "):
+            print(">>>> Exit status: " + resp[len("OUTPUT_FINISHED "):] + "\n\n", end='', sep='')
+            return None
+        if resp.startswith("OUTPUT_FAILED "):
+            print(">>>> FAILED status: " + resp[len("OUTPUT_FAILED "):] + "\n\n", end='', sep='')
+            return None
+        # resp = resp.strip()
+        # print("[" + resp + "]")
+        return resp
+
     def __send_file(self, _filepath):
         """ send file """
         print("SEND FILE " + _filepath)
@@ -237,10 +268,10 @@ class BoSocketClient:
             fatal(8, "Expected [ACCEPTED] but got [" + str(resp) + "]")
         print(resp)
 
-    def run_sync(self):
+    def run_sync(self, _files, _cache_path):
         """ run sync """
-        cache_md5 = md5_by_file(self.__config['cache_path'])
-        cache_size = os.path.getsize(self.__config['cache_path'])
+        cache_md5 = md5_by_file(_cache_path)
+        cache_size = os.path.getsize(_cache_path)
         try:
             print("Connecting... " + self.__hostport)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -253,25 +284,25 @@ class BoSocketClient:
             self.__send_param("SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
             self.__send_param("CACHE_SEND", 1)
             print("Sending cache... ")
-            self.__send_file(self.__config['cache_path'])
+            self.__send_file(_cache_path)
 
             _action = self.__action_request()
             while _action != "ACTIONS_COMPLETED":
                 if _action.startswith("ACTION_DELETED "):
                     _filename = _action[len("ACTION_DELETED "):]
-                    if self.__files.has(_filename):
-                        self.__files.remove(_filename)
-                    self.__files.resave_cache()
+                    if _files.has(_filename):
+                        _files.remove(_filename)
+                    _files.resave_cache()
                 elif _action.startswith("ACTION_SEND_ME_FILE "):
                     _file = _action[len("ACTION_SEND_ME_FILE "):]
                     _fullpath = os.path.join(BO_WORKDIR, _file)
                     self.__send_file(_fullpath)
-                    self.__files.update(_file, {"required_sync": "NONE"})
+                    _files.update(_file, {"required_sync": "NONE"})
                 else:
                     print("ERROR UNKNOWN ACTION -> ", _action)
 
                 _action = self.__action_request()
-            self.__files.resave_cache()
+            _files.resave_cache()
 
             # _ = s.recv(1024).decode("utf-8")
             # s.send(str(flag + "\n").encode())
@@ -289,6 +320,32 @@ class BoSocketClient:
             fatal(11, "Exception is " + str(err))
             # self.__sock = None
         sys.exit(0)
+
+    def run_command(self, _subdir, _command):
+        """ Run remote command """
+        try:
+            print("Connecting... " + self.__hostport)
+            self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.__sock.settimeout(15)
+            self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
+            _ = self.__sock.recv(1024).decode("utf-8")
+            self.__send_param("TARGET_DIR", self.__config['target_dir'])
+            self.__send_param("SUB_DIR", _subdir)
+            self.__send_param("RUN_COMMAND", json.dumps(_command))
+            _output = self.__output_request()
+            while _output is not None:
+                _output = self.__output_request()
+        except socket.timeout:
+            fatal(8, "Socket timeout")
+        except socket.error as serr:
+            if serr.errno == errno.ECONNREFUSED:
+                fatal(9, "Connection refused")
+            else:
+                print(serr)
+                fatal(10, "Socker error " + str(serr))
+        except Exception as err:  # pylint: disable=broad-except
+            fatal(11, "Exception is " + str(err))
+            # self.__sock = None
 
 
 class BoCommand:
@@ -376,6 +433,13 @@ class BoServerSocketHandler(threading.Thread):
             self.__sock.send(str("ACCEPTED " + self.__options["target_dir"]).encode())
         return True
 
+    def __handle_command_sub_dir(self, command):
+        if command.get_command() == "SUB_DIR":
+            self.__options["sub_dir"] = command.get_value()
+            print("sub_dir: '" + self.__options["sub_dir"] + "'")
+            self.__sock.send(str("ACCEPTED " + self.__options["sub_dir"]).encode())
+        return True
+
     def __handle_command_cache_md5(self, command):
         if command.get_command() == "CACHE_MD5":
             self.__options["cache_md5"] = command.get_value()
@@ -444,17 +508,67 @@ class BoServerSocketHandler(threading.Thread):
             self.__sock.send(str("ACTIONS_COMPLETED").encode())
         return True
 
+    def __send_output_line(self, command: BoCommand, _line):
+        print("_line1", _line)
+        self.__sock.send(str("OUTPUT " + _line).encode())
+        self.__read_command(command)
+
+    def __handle_command_run_command(self, command: BoCommand):
+        cmds = json.loads(command.get_value())
+        self.__sock.send(str("ACCEPTED " + str(cmds)).encode())
+        self.__read_command(command)
+        if command.get_command() != "OUTPUT_REQUEST":
+            self.__sock.send(str("FAILED").encode())
+            return False
+        if is_linux():
+            cmds = ['sh', '-c'] + cmds
+        if is_windows():
+            cmds = ['cmd', '/c'] + cmds
+        _cwd = os.path.join(self.__options["target_dir"], self.__options["sub_dir"])
+        if not os.path.isdir(_cwd):
+            self.__sock.send(str("OUTPUT_FAILED " + _cwd + " - not found directory").encode())
+            return False
+        self.__send_output_line(command, ">>>> Directory: " + _cwd + "\n")
+        self.__send_output_line(command, ">>>> Command: " + str(cmds) + "\n")
+        self.__send_output_line(command, ">>>> Output: " + str(cmds) + "\n")
+        _proc = subprocess.Popen(  # pylint: disable=consider-using-with
+            cmds,
+            cwd=_cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+        )
+        _returncode = _proc.poll()
+        _line = _proc.stdout.readline()
+        if _line:
+            self.__send_output_line(command, _line.decode("utf-8"))
+        while _returncode is None:
+            _returncode = _proc.poll()
+            _line = _proc.stdout.readline()
+            if _line:
+                self.__send_output_line(command, _line.decode("utf-8"))
+        while _line:
+            _line = _proc.stdout.readline()
+            if _line:
+                self.__send_output_line(command, _line.decode("utf-8"))
+            else:
+                break
+        self.__sock.send(str("OUTPUT_FINISHED " + str(_returncode)).encode())
+        return True
+
     def run(self):
         welcome_s = "Welcome to bo server\n"
         welcome_s += "target_dir? "
         self.__sock.send(welcome_s.encode())
         _handlers = {
             "TARGET_DIR": self.__handle_command_target_dir,
+            "SUB_DIR": self.__handle_command_sub_dir,
             "CACHE_MD5": self.__handle_command_cache_md5,
             "SEND_BUFFER_SIZE": self.__handle_command_send_buffer_size,
             "CACHE_SIZE": self.__handle_command_cache_size,
             "CACHE_SEND": self.__handle_command_cache_send,
             "ACTION_REQUEST": self.__handle_command_action_request,
+            "RUN_COMMAND": self.__handle_command_run_command,
         }
         command = BoCommand()
         while True:
@@ -539,7 +653,7 @@ if "workdirs" not in BO_CONFIG:
 # print(BO_HOME_CONFIG_DIR)
 # print(CURRENT_DIR)
 
-RESERVED_SUBCOMMAND_0 = ["config", "sync", "server"]
+RESERVED_SUBCOMMAND_0 = ["config", "sync", "server", "remote"]
 
 SUBCOMMANDS = []
 i = 1  # skip first element
@@ -559,6 +673,7 @@ if "help" in SUBCOMMANDS:
         "    'bo config ls' - print configs\n"
         "    'bo config path' - path to config file\n"
         "    'bo sync' - partial sync to remote server\n"
+        "    'bo remote run <cmd> <arg1> <arg2> ... <argN>' - call command on remote host \n"
         "    'bo server' - start server\n"
         "\n"
     )
@@ -748,13 +863,52 @@ if SUBCOMMANDS[0] == "sync":
     end = time.time()
     print("Done. Elapsed ", end - start, "sec")
     client = BoSocketClient({
-        "cache_path": cache_path,
         "target_dir": TARGET_DIR,
         "server_host": SERVER_HOST,
         "server_port": SERVER_PORT,
-    }, FILES)
-    client.run_sync()
+    })
+    client.run_sync(FILES, cache_path)
 
 if SUBCOMMANDS[0] == "server":
     bo_server = BoServer("", 4319)
     bo_server.start()
+
+if SUBCOMMANDS[0] == "remote":
+    TO_SERVER = "base"
+    if SUBCOMMANDS[2] in BO_CONFIG["workdirs"][BO_WORKDIR]["servers"]:
+        TO_SERVER = SUBCOMMANDS[2]
+    cfg = BO_CONFIG["workdirs"][BO_WORKDIR]["servers"][TO_SERVER]
+    SERVER_HOST = cfg["host"]
+    SERVER_PORT = cfg["port"]
+    TARGET_DIR = cfg["target_dir"]
+
+    if SUBCOMMANDS[1] == "run":
+        print("Run command on remote host " + SERVER_HOST + ":" + str(SERVER_PORT))
+        client = BoSocketClient({
+            "target_dir": TARGET_DIR,
+            "server_host": SERVER_HOST,
+            "server_port": SERVER_PORT,
+        })
+        _SUB_DIR = CURRENT_DIR[len(BO_WORKDIR)+1:]
+        _COMMANDS = SUBCOMMANDS[2:]
+        while _COMMANDS[-1] == "":
+            _COMMANDS = _COMMANDS[:-1]
+        client.run_command(_SUB_DIR, _COMMANDS)
+        sys.exit(0)
+    # elif SUBCOMMANDS[1] == "nowait-run":
+    #     sys.exit(0)
+    # elif SUBCOMMANDS[1] == "kill-process":
+    #     sys.exit(0)
+    else:
+        sys.exit("Unknown subcomannd for remote '" + SUBCOMMANDS[1] + "'")
+
+if BO_WORKDIR is not None and SUBCOMMANDS[0] in BO_CONFIG["workdirs"][BO_WORKDIR]['commands']:
+    _command = SUBCOMMANDS[0]
+    _commands = BO_CONFIG["workdirs"][BO_WORKDIR]['commands'][_command]
+    print("Found command ", _command)
+    for _cmd in _commands:
+        print("TODO run> ", _cmd)
+    sys.exit(0)
+
+
+sys.exit("Could not understand please call 'bo help'")
