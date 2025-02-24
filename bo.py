@@ -564,15 +564,29 @@ if "help" in SUBCOMMANDS:
     )
     sys.exit(0)
 
-BO_WORKDIR = None
-TMP_CURRENT_DIR = CURRENT_DIR
-while len(TMP_CURRENT_DIR) > 0:
-    if TMP_CURRENT_DIR in BO_CONFIG["workdirs"]:
-        BO_WORKDIR = TMP_CURRENT_DIR
-        break
-    TMP_CURRENT_DIR = os.path.normpath(os.path.join(TMP_CURRENT_DIR, '..'))
-    if TMP_CURRENT_DIR == '/':
-        break
+
+def find_root_bo_work_dir(_current_dir):
+    """ Find root bo workdir """
+    _ret = None
+    _tmp_dir = _current_dir
+    _infinite_loop_protection = 0
+    while len(_tmp_dir) > 0:
+        _infinite_loop_protection += 1
+        if _tmp_dir in BO_CONFIG["workdirs"]:
+            _ret = _tmp_dir
+            break
+        _tmp_dir = os.path.normpath(os.path.join(_tmp_dir, '..'))
+        if _tmp_dir == '/':
+            break
+        if _tmp_dir == 'C:\\':
+            break
+        if _infinite_loop_protection > 100:
+            break
+    return _ret
+
+
+BO_WORKDIR = find_root_bo_work_dir(CURRENT_DIR)
+
 
 if BO_WORKDIR is not None:
     print("Found workdir in config: ", BO_WORKDIR)
