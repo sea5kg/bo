@@ -43,7 +43,7 @@ import yaml
 BUF_READ_SIZE = 65536
 SEND_BUFFER_SIZE = 512
 
-VERSION = "v0.0.1"
+VERSION = "v0.0.2"
 
 print(
     "Welcom to bo (" + VERSION + ")!\n"
