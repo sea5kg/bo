@@ -6,7 +6,7 @@ Utilite for sync files (like rsync) and run build on remote server (or Virtual M
 
 ```
 $ bo help
-Welcom to bo (v0.0.1)!
+Welcom to bo (v0.0.2)!
 Utilite for sync files (like rsync) and run build on remote server (or Virtual Machine in local network)
 
 Usage:
@@ -52,7 +52,7 @@ On host mchine init new target for directory:
 ```
 $ cd your-project.git
 $ bo config init
-Welcom to bo (v0.0.1)!
+Welcom to bo (v0.0.2)!
 Utilite for sync files (like rsync) and run build on remote server (or Virtual Machine in local network)
 
 Server: 192.168.5.30
