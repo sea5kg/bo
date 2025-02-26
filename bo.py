@@ -326,7 +326,7 @@ class BoSocketClient:
         try:
             print("Connecting... " + self.__hostport)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.__sock.settimeout(15)
+            # self.__sock.settimeout(15)
             self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
             _ = self.__sock.recv(1024).decode("utf-8")
             self.__send_param("TARGET_DIR", self.__config['target_dir'])
