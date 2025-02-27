@@ -902,13 +902,15 @@ if SUBCOMMANDS[0] == "remote":
     else:
         sys.exit("Unknown subcomannd for remote '" + SUBCOMMANDS[1] + "'")
 
-if BO_WORKDIR is not None and SUBCOMMANDS[0] in BO_CONFIG["workdirs"][BO_WORKDIR]['commands']:
-    _command = SUBCOMMANDS[0]
-    _commands = BO_CONFIG["workdirs"][BO_WORKDIR]['commands'][_command]
-    print("Found command ", _command)
-    for _cmd in _commands:
-        print("TODO run> ", _cmd)
-    sys.exit(0)
+if BO_WORKDIR is not None:
+    WORKDIR_CFG = BO_CONFIG["workdirs"][BO_WORKDIR]
+    if 'commands' in WORKDIR_CFG and SUBCOMMANDS[0] in WORKDIR_CFG['commands']:
+        _command = SUBCOMMANDS[0]
+        _commands = BO_CONFIG["workdirs"][BO_WORKDIR]['commands'][_command]
+        print("Found command ", _command)
+        for _cmd in _commands:
+            print("TODO run> ", _cmd)
+        sys.exit(0)
 
 
 sys.exit("Could not understand please call 'bo help'")
