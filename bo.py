@@ -125,7 +125,9 @@ class BoFilesCache:
 
     def __init__(self, _cache_path):
         self.__files = {}
+        self.__files_to_update = {}
         self.__cache_path = _cache_path
+        self.__cache_path_to_update = _cache_path[:-4] + "_to_update.yml"
         # load
         if os.path.isfile(self.__cache_path):
             with open(self.__cache_path, encoding="utf-8") as _file:
@@ -134,11 +136,17 @@ class BoFilesCache:
                 except yaml.YAMLError as _exc:
                     print(_exc)
                     sys.exit(_exc)
+        for _file in self.__files:
+            if self.__files[_file]['required_sync'] != 'NONE':
+                self.__files_to_update[_file] = self.__files[_file]
 
-    def resave_cache(self):
-        """ resave file """
-        with open(self.__cache_path, 'w', encoding="utf-8") as _file:
-            yaml.dump(self.__files, _file, indent=2)
+    def get_cache_path(self):
+        """ return cache path """
+        return self.__cache_path
+
+    def get_cache_path_to_update(self):
+        """ return cache path to_update """
+        return self.__cache_path_to_update
 
     def has(self, _file):
         """ is contains file """
@@ -153,6 +161,7 @@ class BoFilesCache:
             "last_modify": os.path.getmtime(_fullpath),
             "last_modify_formatted": time.ctime(os.path.getmtime(_fullpath)),
         }
+        self.__files_to_update[_file] = self.__files[_file]
 
     def get(self, _file):
         """ return file info """
@@ -165,14 +174,65 @@ class BoFilesCache:
         if 'version' not in self.__files[_file]:
             self.__files[_file]['version'] = 0
         self.__files[_file]['version'] += 1
+        if self.__files[_file]['required_sync'] == 'NONE':
+            if _file in self.__files_to_update:
+                del self.__files_to_update[_file]
+        else:
+            self.__files_to_update[_file] = self.__files[_file]
 
     def remove(self, _file):
         """ remove file from list """
         del self.__files[_file]
+        if _file in self.__files_to_update:
+            del self.__files_to_update[_file]
 
     def get_files(self):
         """ return all the file list """
         return self.__files
+
+    def get_files_to_update(self):
+        """ return all the file list """
+        return self.__files_to_update
+
+    def resave_cache(self):
+        """ resave file """
+        with open(self.__cache_path, 'w', encoding="utf-8") as _file:
+            yaml.dump(self.__files, _file, indent=2)
+        with open(self.__cache_path_to_update, 'w', encoding="utf-8") as _file:
+            yaml.dump(self.__files_to_update, _file, indent=2)
+
+    def rescan_files(self, _workdir):
+        """ Update list of files (scan again) """
+        print("Scanning files...")
+        _start = time.time()
+        current_files = get_all_files(_workdir)
+        _changes = 0
+        for _file in current_files:
+            fullpath = os.path.join(_workdir, _file)
+            if not self.has(_file):
+                self.add(_file, fullpath)
+                _changes += 1
+            else:
+                _fileinfo = self.__files[_file]
+                if os.path.getmtime(fullpath) != _fileinfo["last_modify"]:
+                    self.update(_file, {
+                        "required_sync": "UPDATE",
+                        "md5": md5_by_file(fullpath),
+                        "size": os.path.getsize(fullpath),
+                        "last_modify": os.path.getmtime(fullpath),
+                        "last_modify_formatted": time.ctime(os.path.getmtime(fullpath)),
+                    })
+                if not os.path.isfile(fullpath):
+                    self.update(_file, {"required_sync": "DELETE"})
+        for _file in self.__files:
+            if _file not in current_files:
+                self.update(_file, {"required_sync": "DELETE"})
+                _changes += 1
+        _end = time.time()
+        print(
+            "Done. Found all files:", len(current_files), ". \n"
+            "   Changes: ", _changes, ", Elapsed ", _end - _start, "sec"
+        )
 
 
 class BoSocketClient:
@@ -268,10 +328,10 @@ class BoSocketClient:
             fatal(8, "Expected [ACCEPTED] but got [" + str(resp) + "]")
         print(resp)
 
-    def run_sync(self, _files, _cache_path):
+    def run_sync(self, _files: BoFilesCache):
         """ run sync """
-        cache_md5 = md5_by_file(_cache_path)
-        cache_size = os.path.getsize(_cache_path)
+        cache_md5 = md5_by_file(_files.get_cache_path_to_update())
+        cache_size = os.path.getsize(_files.get_cache_path_to_update())
         try:
             print("Connecting... " + self.__hostport)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -284,7 +344,7 @@ class BoSocketClient:
             self.__send_param("SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
             self.__send_param("CACHE_SEND", 1)
             print("Sending cache... ")
-            self.__send_file(_cache_path)
+            self.__send_file(_files.get_cache_path_to_update())
 
             _action = self.__action_request()
             while _action != "ACTIONS_COMPLETED":
@@ -827,36 +887,7 @@ if SUBCOMMANDS[0] == "sync":
     cache_path = cfg["cache_path"]
     FILES = BoFilesCache(cache_path)
 
-    print("Scanning files...")
-    start = time.time()
-    current_files = get_all_files(BO_WORKDIR)
-    _CHANGES = 0
-    for _file in current_files:
-        fullpath = os.path.join(BO_WORKDIR, _file)
-        if not FILES.has(_file):
-            FILES.add(_file, fullpath)
-            _CHANGES += 1
-        else:
-            _fileinfo = FILES.get(_file)
-            if os.path.getmtime(fullpath) != _fileinfo["last_modify"]:
-                FILES.update(_file, {
-                    "required_sync": "UPDATE",
-                    "md5": md5_by_file(fullpath),
-                    "size": os.path.getsize(fullpath),
-                    "last_modify": os.path.getmtime(fullpath),
-                    "last_modify_formatted": time.ctime(os.path.getmtime(fullpath)),
-                })
-            if not os.path.isfile(fullpath):
-                FILES.update(_file, {"required_sync": "DELETE"})
-    for _file in FILES.get_files():
-        if _file not in current_files:
-            FILES.update(_file, {"required_sync": "DELETE"})
-            _CHANGES += 1
-    end = time.time()
-    print(
-        "Done. Found all files:", len(current_files), ". \n"
-        "   Changes: ", _CHANGES, ", Elapsed ", end - start, "sec"
-    )
+    FILES.rescan_files(BO_WORKDIR)
     start = time.time()
     print("Updating cache...")
     FILES.resave_cache()
@@ -867,7 +898,7 @@ if SUBCOMMANDS[0] == "sync":
         "server_host": SERVER_HOST,
         "server_port": SERVER_PORT,
     })
-    client.run_sync(FILES, cache_path)
+    client.run_sync(FILES)
 
 if SUBCOMMANDS[0] == "server":
     bo_server = BoServer("", 4319)
