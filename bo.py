@@ -79,45 +79,49 @@ def resave_config():
         yaml.dump(BO_CONFIG, _file, indent=2)
 
 
-def get_all_files(_startdir):
-    """ recursive find all files in dir """
-    _ret = []
-    _rec = [_startdir]
-    while len(_rec) > 0:
-        _dirpath = _rec[0]
-        del _rec[0]
-        for _file in os.listdir(_dirpath):
-            _filepath = os.path.join(_dirpath, _file)
-            if _file == '.git' and os.path.isdir(_filepath):
-                continue
-            if os.path.isdir(_filepath):
-                _rec.append(_filepath)
-                continue
-            if os.path.isfile(_filepath):
-                _ret.append(_filepath[len(_startdir)+1:])
-    return _ret
+class BoUtils:
+    """ BoUtils """
 
+    @staticmethod
+    def get_all_files(_startdir):
+        """ recursive find all files in dir """
+        _ret = []
+        _rec = [_startdir]
+        while len(_rec) > 0:
+            _dirpath = _rec[0]
+            del _rec[0]
+            for _file in os.listdir(_dirpath):
+                _filepath = os.path.join(_dirpath, _file)
+                if _file == '.git' and os.path.isdir(_filepath):
+                    continue
+                if os.path.isdir(_filepath):
+                    _rec.append(_filepath)
+                    continue
+                if os.path.isfile(_filepath):
+                    _ret.append(_filepath[len(_startdir)+1:])
+        return _ret
 
-def md5_by_file(_filepath):
-    """ Calculate md5 by file """
-    md5 = hashlib.md5()
-    with open(_filepath, 'rb') as _file:
-        while True:
-            data = _file.read(BUF_READ_SIZE)
-            if not data:
-                break
-            md5.update(data)
-    return md5.hexdigest()
+    @staticmethod
+    def md5_by_file(_filepath):
+        """ Calculate md5 by file """
+        md5 = hashlib.md5()
+        with open(_filepath, 'rb') as _file:
+            while True:
+                data = _file.read(BUF_READ_SIZE)
+                if not data:
+                    break
+                md5.update(data)
+        return md5.hexdigest()
 
+    @staticmethod
+    def is_linux():
+        """ current system is linux? """
+        return platform.platform().lower().startswith("linux")
 
-def is_linux():
-    """ current system is linux? """
-    return platform.platform().lower().startswith("linux")
-
-
-def is_windows():
-    """ current system is windows? """
-    return platform.platform().lower().startswith("windows")
+    @staticmethod
+    def is_windows():
+        """ current system is windows? """
+        return platform.platform().lower().startswith("windows")
 
 
 class BoFilesCache:
@@ -156,7 +160,7 @@ class BoFilesCache:
         """ added file to cache """
         self.__files[_file] = {
             "required_sync": "UPDATE",
-            "md5": md5_by_file(_fullpath),
+            "md5": BoUtils.md5_by_file(_fullpath),
             "size": os.path.getsize(_fullpath),
             "last_modify": os.path.getmtime(_fullpath),
             "last_modify_formatted": time.ctime(os.path.getmtime(_fullpath)),
@@ -205,7 +209,7 @@ class BoFilesCache:
         """ Update list of files (scan again) """
         print("Scanning files...")
         _start = time.time()
-        current_files = get_all_files(_workdir)
+        current_files = BoUtils.get_all_files(_workdir)
         _changes = 0
         for _file in current_files:
             fullpath = os.path.join(_workdir, _file)
@@ -217,7 +221,7 @@ class BoFilesCache:
                 if os.path.getmtime(fullpath) != _fileinfo["last_modify"]:
                     self.update(_file, {
                         "required_sync": "UPDATE",
-                        "md5": md5_by_file(fullpath),
+                        "md5": BoUtils.md5_by_file(fullpath),
                         "size": os.path.getsize(fullpath),
                         "last_modify": os.path.getmtime(fullpath),
                         "last_modify_formatted": time.ctime(os.path.getmtime(fullpath)),
@@ -330,7 +334,7 @@ class BoSocketClient:
 
     def run_sync(self, _files: BoFilesCache):
         """ run sync """
-        cache_md5 = md5_by_file(_files.get_cache_path_to_update())
+        cache_md5 = BoUtils.md5_by_file(_files.get_cache_path_to_update())
         cache_size = os.path.getsize(_files.get_cache_path_to_update())
         try:
             print("Connecting... " + self.__hostport)
@@ -467,7 +471,7 @@ class BoServerSocketHandler(threading.Thread):
                     _file.write(data)
                 else:
                     break
-        got_file_md5 = md5_by_file(filepath)
+        got_file_md5 = BoUtils.md5_by_file(filepath)
         if file_md5 != got_file_md5:
             self.__sock.send("WRONG_MD5".encode())
             print("WRONG_MD5")
@@ -580,9 +584,9 @@ class BoServerSocketHandler(threading.Thread):
         if command.get_command() != "OUTPUT_REQUEST":
             self.__sock.send(str("FAILED").encode())
             return False
-        if is_linux():
+        if BoUtils.is_linux():
             cmds = ['sh', '-c'] + cmds
-        if is_windows():
+        if BoUtils.is_windows():
             cmds = ['cmd', '/c'] + cmds
         _cwd = os.path.join(self.__options["target_dir"], self.__options["sub_dir"])
         if not os.path.isdir(_cwd):
