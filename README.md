@@ -16,7 +16,7 @@ Usage:
     'bo config remove-command <cmd_name>' - Init command for current directory
     'bo config ls' - print configs
     'bo config path' - path to config file
-    'bo sync' - partial sync to remote server
+    'bo sync -f' - force sync all files to remote server
     'bo remote run <cmd> <arg1> <arg2> ... <argN>' - call command on remote host
     'bo server' - start server
 ```
