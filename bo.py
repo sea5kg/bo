@@ -26,6 +26,8 @@ Original repository: https://github.com/sea5kg/bo
 
 """
 
+# pylint: disable=too-many-lines
+
 import os
 import sys
 import time
@@ -35,10 +37,13 @@ import platform
 import json
 import subprocess
 import threading
+import logging
 import errno
 import hashlib
 from pathlib import Path
 import yaml
+
+logging.basicConfig()
 
 BUF_READ_SIZE = 65536
 SEND_BUFFER_SIZE = 512
@@ -46,7 +51,7 @@ SEND_BUFFER_SIZE = 512
 VERSION = "v0.0.2"
 
 print(
-    "Welcom to bo (" + VERSION + ")!\n"
+    "Welcome to bo (" + VERSION + ")!\n"
     "Utilite for sync files (like rsync) and "
     "run build on remote server (or Virtual Machine in local network)\n"
 )
@@ -54,7 +59,7 @@ print(
 
 def fatal(error_num, msg):
     """ print error and exit """
-    print("\n[ERROR] (" + str(error_num) + ") " + msg + "\n\n")
+    logging.error("\nERROR (%s) %s\n", str(error_num), msg)
     sys.exit(-1)
 
 
@@ -205,7 +210,7 @@ class BoFilesCache:
         with open(self.__cache_path_to_update, 'w', encoding="utf-8") as _file:
             yaml.dump(self.__files_to_update, _file, indent=2)
 
-    def rescan_files(self, _workdir):
+    def rescan_files(self, _workdir, force_update=False):
         """ Update list of files (scan again) """
         print("Scanning files...")
         _start = time.time()
@@ -226,6 +231,10 @@ class BoFilesCache:
                         "last_modify": os.path.getmtime(fullpath),
                         "last_modify_formatted": time.ctime(os.path.getmtime(fullpath)),
                     })
+                if force_update:
+                    self.update(_file, {
+                        "required_sync": "UPDATE",
+                    })
                 if not os.path.isfile(fullpath):
                     self.update(_file, {"required_sync": "DELETE"})
         for _file in self.__files:
@@ -239,64 +248,108 @@ class BoFilesCache:
         )
 
 
-class BoSocketClient:
-    """ Implementation for clietn protocol """
-    def __init__(self, config):
+class BoClientSocketProtocol:
+    """ Implementation for protocol of bo by socket """
+
+    def __init__(self, config, timeout=15):
         self.__config = config
+        self.__timeout = timeout
         self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
         self.__sock = None
+        self.__log = logging.getLogger("BoProtocolSocket")
+        self.__log.setLevel(logging.DEBUG)
 
-    def check_connection(self):
-        """ check connection """
+    def __enter__(self):
         try:
-            print("Check connecting... " + self.__hostport)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(15)
-            sock.connect((self.__config['server_host'], self.__config['server_port']))
-            _ = sock.recv(1024).decode("utf-8")
-            sock.close()
+            self.__log.info("Connecting... %s", self.__hostport)
+            self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if self.__timeout > 0:
+                self.__sock.settimeout(15)
+            self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
+            resp = self.__sock.recv(1024).decode("utf-8")
+            resp = resp.strip()
+            self.__log.info("WELCOME %s", resp)
+            if not resp.startswith("Welcome to bo server"):
+                self.__log.warning("Are you sure that is bo server?????")
         except socket.timeout:
-            return False
+            self.__sock = None
+            fatal(8, "Socket timeout")
         except socket.error as serr:
             if serr.errno == errno.ECONNREFUSED:
-                return False
-            print(serr)
-            return False
+                self.__sock = None
+                fatal(9, "Connection refused")
+            else:
+                self.__sock = None
+                fatal(10, "Socker error " + str(serr))
         except Exception as err:  # pylint: disable=broad-except
-            fatal(112, "Exception is " + str(err))
-        return True
+            self.__sock = None
+            fatal(11, "Exception is " + str(err))
+        return self
 
-    def __send_param(self, name, value):
+    def __exit__(self, _type, _value, _traceback):
+        if self.__sock is not None:
+            self.__sock.close()
+
+    def send_param(self, name, value):
         """ send command """
-        name = name.strip()
-        value = str(value).strip()
-        command = name + " " + value
-        command = command.strip()
-        print(command)
-        command += "\n"
-        self.__sock.send(command.encode())
-        resp = self.__sock.recv(1024).decode("utf-8")
-        accepted = ""
-        if len(resp) >= 8:
-            accepted = resp[:8]
-        # LATER: check value
-        if accepted != "ACCEPTED":
-            fatal(7, "Expected [ACCEPTED] but got [" + str(resp) + "]")
-        print(resp)
 
-    def __action_request(self):
-        """ action_request """
+        if self.__sock is None:
+            self.__log.error("No connection")
+            return
+
+        try:
+            name = name.strip()
+            value = str(value).strip()
+            command = name + " " + value
+            command = command.strip()
+            self.__log.info("command = %s", str(command))
+            command += "\n"
+            self.__sock.send(command.encode())
+            resp = self.__sock.recv(1024).decode("utf-8")
+            accepted = ""
+            if len(resp) >= 8:
+                accepted = resp[:8]
+            # LATER: check value
+            if accepted != "ACCEPTED":
+                fatal(557, "Expected [ACCEPTED] but got [" + str(resp) + "]")
+            self.__log.info("resp = %s", str(resp))
+        except socket.timeout:
+            self.__sock = None
+            fatal(558, "Socket timeout")
+        except socket.error as serr:
+            if serr.errno == errno.ECONNREFUSED:
+                self.__sock = None
+                fatal(559, "Connection refused")
+            else:
+                self.__sock = None
+                fatal(551, "Socker error " + str(serr))
+        except Exception as err:  # pylint: disable=broad-except
+            self.__sock = None
+            fatal(552, "Exception is " + str(err))
+
+    def action_request(self):
+        """ action_request - get control command from server """
+
+        if self.__sock is None:
+            self.__log.error("No connection")
+            return "NO_CONNECTION"
+
         command = "ACTION_REQUEST"
-        print(command)
+        self.__log.info(command)
         command += "\n"
         self.__sock.send(command.encode())
         resp = self.__sock.recv(1024).decode("utf-8")
         resp = resp.strip()
-        print(resp)
+        self.__log.info("resp = %s", str(resp))
         return resp
 
-    def __output_request(self):
-        """ OUTPUT_request """
+    def output_request(self):
+        """ OUTPUT_request what output from server side """
+
+        if self.__sock is None:
+            self.__log.error("No connection")
+            return "NO_CONNECTION"
+
         command = "OUTPUT_REQUEST"
         # print(command)
         command += "\n"
@@ -314,9 +367,14 @@ class BoSocketClient:
         # print("[" + resp + "]")
         return resp
 
-    def __send_file(self, _filepath):
+    def send_file(self, _filepath):
         """ send file """
-        print("SEND FILE " + _filepath)
+
+        if self.__sock is None:
+            self.__log.error("No connection")
+            return
+
+        self.__log.info("SEND FILE = %s", _filepath)
         with open(_filepath, 'rb') as _file:
             while True:
                 data = _file.read(SEND_BUFFER_SIZE)
@@ -330,27 +388,33 @@ class BoSocketClient:
             accepted = resp[:8]
         if accepted != "ACCEPTED":
             fatal(8, "Expected [ACCEPTED] but got [" + str(resp) + "]")
-        print(resp)
+        self.__log.info("Response: %s", str(resp))
+
+
+class BoClientSocketHandler:
+    """ Implementation for client protocol """
+    def __init__(self, config):
+        self.__config = config
+        self.__log = logging.getLogger("BoClientSocketHandler")
+        self.__log.setLevel(logging.DEBUG)
+
+        # self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
+        # self.__sock = None
 
     def run_sync(self, _files: BoFilesCache):
         """ run sync """
         cache_md5 = BoUtils.md5_by_file(_files.get_cache_path_to_update())
         cache_size = os.path.getsize(_files.get_cache_path_to_update())
-        try:
-            print("Connecting... " + self.__hostport)
-            self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.__sock.settimeout(15)
-            self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
-            _ = self.__sock.recv(1024).decode("utf-8")
-            self.__send_param("TARGET_DIR", self.__config['target_dir'])
-            self.__send_param("CACHE_MD5", cache_md5)
-            self.__send_param("CACHE_SIZE", cache_size)
-            self.__send_param("SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
-            self.__send_param("CACHE_SEND", 1)
-            print("Sending cache... ")
-            self.__send_file(_files.get_cache_path_to_update())
+        with BoClientSocketProtocol(self.__config, timeout=15) as _proto:
+            _proto.send_param("TARGET_DIR", self.__config['target_dir'])
+            _proto.send_param("CACHE_MD5", cache_md5)
+            _proto.send_param("CACHE_SIZE", cache_size)
+            _proto.send_param("SEND_BUFFER_SIZE", SEND_BUFFER_SIZE)
+            _proto.send_param("CACHE_SEND", 1)
+            self.__log.info("Sending cache... ")
+            _proto.send_file(_files.get_cache_path_to_update())
 
-            _action = self.__action_request()
+            _action = _proto.action_request()
             while _action != "ACTIONS_COMPLETED":
                 if _action.startswith("ACTION_DELETED "):
                     _filename = _action[len("ACTION_DELETED "):]
@@ -360,56 +424,23 @@ class BoSocketClient:
                 elif _action.startswith("ACTION_SEND_ME_FILE "):
                     _file = _action[len("ACTION_SEND_ME_FILE "):]
                     _fullpath = os.path.join(BO_WORKDIR, _file)
-                    self.__send_file(_fullpath)
+                    _proto.send_file(_fullpath)
                     _files.update(_file, {"required_sync": "NONE"})
                 else:
                     print("ERROR UNKNOWN ACTION -> ", _action)
 
-                _action = self.__action_request()
+                _action = _proto.action_request()
             _files.resave_cache()
-
-            # _ = s.recv(1024).decode("utf-8")
-            # s.send(str(flag + "\n").encode())
-            # _ = s.recv(1024).decode("utf-8")
-            self.__sock.close()
-        except socket.timeout:
-            fatal(8, "Socket timeout")
-        except socket.error as serr:
-            if serr.errno == errno.ECONNREFUSED:
-                fatal(9, "Connection refused")
-            else:
-                print(serr)
-                fatal(10, "Socker error " + str(serr))
-        except Exception as err:  # pylint: disable=broad-except
-            fatal(11, "Exception is " + str(err))
-            # self.__sock = None
-        sys.exit(0)
 
     def run_command(self, _subdir, _command):
         """ Run remote command """
-        try:
-            print("Connecting... " + self.__hostport)
-            self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # self.__sock.settimeout(15)
-            self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
-            _ = self.__sock.recv(1024).decode("utf-8")
-            self.__send_param("TARGET_DIR", self.__config['target_dir'])
-            self.__send_param("SUB_DIR", _subdir)
-            self.__send_param("RUN_COMMAND", json.dumps(_command))
-            _output = self.__output_request()
+        with BoClientSocketProtocol(self.__config, timeout=-1) as _proto:
+            _proto.send_param("TARGET_DIR", self.__config['target_dir'])
+            _proto.send_param("SUB_DIR", _subdir)
+            _proto.send_param("RUN_COMMAND", json.dumps(_command))
+            _output = _proto.output_request()
             while _output is not None:
-                _output = self.__output_request()
-        except socket.timeout:
-            fatal(8, "Socket timeout")
-        except socket.error as serr:
-            if serr.errno == errno.ECONNREFUSED:
-                fatal(9, "Connection refused")
-            else:
-                print(serr)
-                fatal(10, "Socker error " + str(serr))
-        except Exception as err:  # pylint: disable=broad-except
-            fatal(11, "Exception is " + str(err))
-            # self.__sock = None
+                _output = _proto.output_request()
 
 
 class BoCommand:
@@ -621,8 +652,8 @@ class BoServerSocketHandler(threading.Thread):
         return True
 
     def run(self):
-        welcome_s = "Welcome to bo server\n"
-        welcome_s += "target_dir? "
+        welcome_s = "Welcome to bo server (" + VERSION + ")\n"
+        welcome_s += "TARGET_DIR? "
         self.__sock.send(welcome_s.encode())
         _handlers = {
             "TARGET_DIR": self.__handle_command_target_dir,
@@ -702,6 +733,36 @@ class BoServer():
                 thr.kill()
 
 
+class BoCommandArgsParser:
+    """ Helper class for parse args """
+    def __init__(self):
+        self.__subcommands = []
+        _idx = 1  # skip first element
+        while _idx < len(sys.argv):
+            self.__subcommands.append(sys.argv[_idx])
+            _idx += 1
+
+    def get_arg(self, idx):
+        """ return arg by idx or empty string """
+        if idx < len(self.__subcommands):
+            return self.__subcommands[idx]
+        return ""
+
+    def has_arg(self, vals):
+        """ test has args or not """
+        if isinstance(vals, str):
+            return vals in self.__subcommands
+        if isinstance(vals, list):
+            for _val in vals:
+                if _val in self.__subcommands:
+                    return True
+        return False
+
+    def get_subcommands_after(self, idx):
+        """ return subcomands """
+        return self.__subcommands[idx:]
+
+
 if os.path.isfile(BO_CONFIG_FILEPATH):
     with open(BO_CONFIG_FILEPATH, encoding="utf-8") as _file:
         try:
@@ -717,17 +778,11 @@ if "workdirs" not in BO_CONFIG:
 # print(BO_HOME_CONFIG_DIR)
 # print(CURRENT_DIR)
 
+ARGS = BoCommandArgsParser()
+
 RESERVED_SUBCOMMAND_0 = ["config", "sync", "server", "remote"]
 
-SUBCOMMANDS = []
-i = 1  # skip first element
-while i < len(sys.argv):
-    SUBCOMMANDS.append(sys.argv[i])
-    i += 1
-while len(SUBCOMMANDS) < 10:
-    SUBCOMMANDS.append("")
-
-if "help" in SUBCOMMANDS:
+if ARGS.has_arg(["help", "/?", "-h", "--help"]):
     print(
         "Usage:\n"
         "    'bo config init' - add current directory to config\n"
@@ -737,6 +792,7 @@ if "help" in SUBCOMMANDS:
         "    'bo config ls' - print configs\n"
         "    'bo config path' - path to config file\n"
         "    'bo sync' - partial sync to remote server\n"
+        "    'bo sync -f' - force sync all files to remote server\n"
         "    'bo remote run <cmd> <arg1> <arg2> ... <argN>' - call command on remote host \n"
         "    'bo server' - start server\n"
         "\n"
@@ -766,19 +822,18 @@ def find_root_bo_work_dir(_current_dir):
 
 BO_WORKDIR = find_root_bo_work_dir(CURRENT_DIR)
 
-
 if BO_WORKDIR is not None:
     print("Found workdir in config: ", BO_WORKDIR)
 
-if SUBCOMMANDS[0] == "config":
-    if SUBCOMMANDS[1] == "deinit":
+if ARGS.get_arg(0) == "config":
+    if ARGS.get_arg(1) == "deinit":
         if BO_WORKDIR is None:
             fatal(5, "Not found initialize diretory: " + BO_WORKDIR)
         print("Removing " + BO_WORKDIR + " from config\n")
         del BO_CONFIG["workdirs"][BO_WORKDIR]
         resave_config()
         print("Done.")
-    elif SUBCOMMANDS[1] == "init":
+    elif ARGS.get_arg(1) == "init":
         if BO_WORKDIR is not None:
             fatal(4, "Already initialized directory: " + CURRENT_DIR)
         SERVER0 = input("Server: ")
@@ -801,13 +856,13 @@ if SUBCOMMANDS[0] == "config":
         resave_config()
         print("Done.")
         sys.exit(0)
-    elif SUBCOMMANDS[1] == "command":
+    elif ARGS.get_arg(1) == "command":
         if BO_WORKDIR is None:
             fatal(4, "Not initialized current directory: " + CURRENT_DIR)
         if "commands" not in BO_CONFIG["workdirs"][BO_WORKDIR]:
             BO_CONFIG["workdirs"][BO_WORKDIR]["commands"] = {}
         _cfg_cmds = BO_CONFIG["workdirs"][BO_WORKDIR]["commands"]
-        COMMAND_NAME = SUBCOMMANDS[2]  # possible get from command line params
+        COMMAND_NAME = ARGS.get_arg(2)  # possible get from command line params
         if COMMAND_NAME == "":
             COMMAND_NAME = input("Command Name: ").strip()
         else:
@@ -838,8 +893,8 @@ if SUBCOMMANDS[0] == "config":
         resave_config()
         print("Done.")
         sys.exit(0)
-    elif SUBCOMMANDS[1] == "remove-command":
-        command_name = SUBCOMMANDS[2]
+    elif ARGS.get_arg(1) == "remove-command":
+        command_name = ARGS.get_arg(2)
         if command_name == "":
             fatal(
                 110,
@@ -856,7 +911,7 @@ if SUBCOMMANDS[0] == "config":
         resave_config()
         print("Done.")
         sys.exit(0)
-    elif SUBCOMMANDS[1] == "ls":
+    elif ARGS.get_arg(1) == "ls":
         for _workdir in BO_CONFIG["workdirs"]:
             _item = BO_CONFIG["workdirs"][_workdir]
             print("Dir: " + _workdir)
@@ -868,18 +923,18 @@ if SUBCOMMANDS[0] == "config":
                 print("     - Cache: " + _server["cache_path"])
         print("")
         sys.exit(0)
-    elif SUBCOMMANDS[1] == "path":
+    elif ARGS.get_arg(1) == "path":
         print("BO_CONFIG_FILEPATH: " + BO_CONFIG_FILEPATH)
     else:
-        fatal(3, "Unknown sub command '" + SUBCOMMANDS[1] + "'")
+        fatal(3, "Unknown sub command '" + ARGS.get_arg(1) + "'")
     sys.exit(0)
 
-if SUBCOMMANDS[0] == "sync":
+if ARGS.get_arg(0) == "sync":
     if BO_WORKDIR is None:
         fatal(6, "Not found config for directory '" + CURRENT_DIR + "'")
     TO_SERVER = "base"
-    if SUBCOMMANDS[1] in BO_CONFIG["workdirs"][BO_WORKDIR]["servers"]:
-        TO_SERVER = SUBCOMMANDS[1]
+    if ARGS.get_arg(1) in BO_CONFIG["workdirs"][BO_WORKDIR]["servers"]:
+        TO_SERVER = ARGS.get_arg(1)
     cfg = BO_CONFIG["workdirs"][BO_WORKDIR]["servers"][TO_SERVER]
     SERVER_HOST = cfg["host"]
     SERVER_PORT = cfg["port"]
@@ -891,56 +946,55 @@ if SUBCOMMANDS[0] == "sync":
     cache_path = cfg["cache_path"]
     FILES = BoFilesCache(cache_path)
 
-    FILES.rescan_files(BO_WORKDIR)
+    FILES.rescan_files(BO_WORKDIR, ARGS.has_arg(["-f", "--force"]))
     start = time.time()
     print("Updating cache...")
     FILES.resave_cache()
     end = time.time()
     print("Done. Elapsed ", end - start, "sec")
-    client = BoSocketClient({
+    client = BoClientSocketHandler({
         "target_dir": TARGET_DIR,
         "server_host": SERVER_HOST,
         "server_port": SERVER_PORT,
     })
     client.run_sync(FILES)
+    sys.exit(0)
 
-if SUBCOMMANDS[0] == "server":
+if ARGS.get_arg(0) == "server":
     bo_server = BoServer("", 4319)
     bo_server.start()
 
-if SUBCOMMANDS[0] == "remote":
+if ARGS.get_arg(0) == "remote":
     TO_SERVER = "base"
-    if SUBCOMMANDS[2] in BO_CONFIG["workdirs"][BO_WORKDIR]["servers"]:
-        TO_SERVER = SUBCOMMANDS[2]
+    if ARGS.get_arg(2) in BO_CONFIG["workdirs"][BO_WORKDIR]["servers"]:
+        TO_SERVER = ARGS.get_arg(2)
     cfg = BO_CONFIG["workdirs"][BO_WORKDIR]["servers"][TO_SERVER]
     SERVER_HOST = cfg["host"]
     SERVER_PORT = cfg["port"]
     TARGET_DIR = cfg["target_dir"]
 
-    if SUBCOMMANDS[1] == "run":
+    if ARGS.get_arg(1) == "run":
         print("Run command on remote host " + SERVER_HOST + ":" + str(SERVER_PORT))
-        client = BoSocketClient({
+        client = BoClientSocketHandler({
             "target_dir": TARGET_DIR,
             "server_host": SERVER_HOST,
             "server_port": SERVER_PORT,
         })
         _SUB_DIR = CURRENT_DIR[len(BO_WORKDIR)+1:]
-        _COMMANDS = SUBCOMMANDS[2:]
-        while _COMMANDS[-1] == "":
-            _COMMANDS = _COMMANDS[:-1]
+        _COMMANDS = ARGS.get_subcommands_after(2)
         client.run_command(_SUB_DIR, _COMMANDS)
         sys.exit(0)
-    # elif SUBCOMMANDS[1] == "nowait-run":
+    # elif ARGS.get_arg(1) == "nowait-run":
     #     sys.exit(0)
-    # elif SUBCOMMANDS[1] == "kill-process":
+    # elif ARGS.get_arg(1) == "kill-process":
     #     sys.exit(0)
     else:
-        sys.exit("Unknown subcomannd for remote '" + SUBCOMMANDS[1] + "'")
+        sys.exit("Unknown subcomannd for remote '" + ARGS.get_arg(1) + "'")
 
 if BO_WORKDIR is not None:
     WORKDIR_CFG = BO_CONFIG["workdirs"][BO_WORKDIR]
-    if 'commands' in WORKDIR_CFG and SUBCOMMANDS[0] in WORKDIR_CFG['commands']:
-        _command = SUBCOMMANDS[0]
+    if 'commands' in WORKDIR_CFG and ARGS.get_arg(0) in WORKDIR_CFG['commands']:
+        _command = ARGS.get_arg(0)
         _commands = BO_CONFIG["workdirs"][BO_WORKDIR]['commands'][_command]
         print("Found command ", _command)
         for _cmd in _commands:
