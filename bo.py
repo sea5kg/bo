@@ -354,7 +354,7 @@ class BoClientSocketProtocol:
         # print(command)
         command += "\n"
         self.__sock.send(command.encode())
-        resp = self.__sock.recv(1024).decode("utf-8")
+        resp = self.__sock.recv(4096).decode("utf-8")
         if resp.startswith("OUTPUT "):
             print(resp[len("OUTPUT "):], end='', sep='')
         if resp.startswith("OUTPUT_FINISHED "):
