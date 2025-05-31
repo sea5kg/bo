@@ -146,6 +146,13 @@ class BoFilesCache:
                     print(_exc)
                     sys.exit(_exc)
         for _file in self.__files:
+            if _file not in self.__files:
+                print("ERROR: File " + _file + " not found in filelist")
+                continue
+            if 'required_sync' not in self.__files[_file]:
+                print("Missing 'required_sync' for a file '" + _file + "'")
+                self.__files[_file]['required_sync'] = 'NONE'
+                continue
             if self.__files[_file]['required_sync'] != 'NONE':
                 self.__files_to_update[_file] = self.__files[_file]
 
