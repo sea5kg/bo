@@ -217,6 +217,14 @@ class BoFilesCache:
         with open(self.__cache_path_to_update, 'w', encoding="utf-8") as _file:
             yaml.dump(self.__files_to_update, _file, indent=2)
 
+    def get_number_of_files_to_update(self):
+        """ return number of files to update """
+        _files_to_update_counter = 0
+        for _file in self.__files:
+            if self.__files[_file]['required_sync'] != 'NONE':
+                _files_to_update_counter += 1
+        return _files_to_update_counter
+
     def rescan_files(self, _workdir, force_update=False):
         """ Update list of files (scan again) """
         print("Scanning files...")
@@ -408,6 +416,20 @@ class BoClientSocketHandler:
         # self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
         # self.__sock = None
 
+    def __print_statistics(self, start_time, _files_syncked, _files_to_updating):
+        end_time = time.time()
+        _elapsed = end_time - start_time
+        _remaining = _files_to_updating - _files_syncked
+        if _remaining > 0:
+            _remaining = _remaining / (_files_syncked / _elapsed)
+        self.__log.info(
+            "Updated %s/%s at %s seconds. Time remaining: %s seconds",
+            str(_files_syncked),
+            str(_files_to_updating),
+            "{:.2f}".format(_elapsed),
+            "{:.2f}".format(_remaining)
+        )
+
     def run_sync(self, _files: BoFilesCache):
         """ run sync """
         cache_md5 = BoUtils.md5_by_file(_files.get_cache_path_to_update())
@@ -422,21 +444,33 @@ class BoClientSocketHandler:
             _proto.send_file(_files.get_cache_path_to_update())
 
             _action = _proto.action_request()
+            _files_syncked = 0
+            _files_to_updating = _files.get_number_of_files_to_update()
+            _resave_every_files_synced = 100
+            start_time = time.time()
             while _action != "ACTIONS_COMPLETED":
                 if _action.startswith("ACTION_DELETED "):
                     _filename = _action[len("ACTION_DELETED "):]
                     if _files.has(_filename):
                         _files.remove(_filename)
-                    _files.resave_cache()
+                    _files_syncked += 1
+                    self.__print_statistics(start_time, _files_syncked, _files_to_updating)
+                    if _files_syncked % _resave_every_files_synced == 0:
+                        _files.resave_cache()
                 elif _action.startswith("ACTION_SEND_ME_FILE "):
                     _file = _action[len("ACTION_SEND_ME_FILE "):]
                     _fullpath = os.path.join(BO_WORKDIR, _file)
                     _proto.send_file(_fullpath)
                     _files.update(_file, {"required_sync": "NONE"})
+                    _files_syncked += 1
+                    self.__print_statistics(start_time, _files_syncked, _files_to_updating)
+                    if _files_syncked % _resave_every_files_synced == 0:
+                        _files.resave_cache()
                 else:
                     print("ERROR UNKNOWN ACTION -> ", _action)
 
                 _action = _proto.action_request()
+            self.__print_statistics(start_time, _files_syncked, _files_to_updating)
             _files.resave_cache()
 
     def run_command(self, _subdir, _command):
