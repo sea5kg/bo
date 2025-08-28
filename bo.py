@@ -1056,10 +1056,37 @@ if BO_WORKDIR is not None:
     if 'commands' in WORKDIR_CFG and ARGS.get_arg(0) in WORKDIR_CFG['commands']:
         _command = ARGS.get_arg(0)
         _commands = BO_CONFIG["workdirs"][BO_WORKDIR]['commands'][_command]
+
+        TO_SERVER = "base"
+
+        cfg = BO_CONFIG["workdirs"][BO_WORKDIR]["servers"][TO_SERVER]
+        SERVER_HOST = cfg["host"]
+        SERVER_PORT = cfg["port"]
+        TARGET_DIR = cfg["target_dir"]
+
         print("Found command ", _command)
         for _cmd in _commands:
-            print("TODO run> ", _cmd)
+            if ':' not in _cmd:
+                fatal(701, "Expected in command from config '<cmd-target>: ...'")
+            cmd_target = _cmd.split(":")[0]
+            cmd_value = _cmd[len(cmd_target)+1:].strip()
+            cmd_target = cmd_target.strip()
+            if cmd_target == "local":
+                print("local> " + cmd_value)
+                if os.system(cmd_value) != 0:
+                    fatal(702, "Local command '" + cmd_value + "' ")
+            elif cmd_target == "remote-run":
+                print("remote-run (" + SERVER_HOST + ":" + str(SERVER_PORT) + ")> " + cmd_value)
+                client = BoClientSocketHandler({
+                    "target_dir": TARGET_DIR,
+                    "server_host": SERVER_HOST,
+                    "server_port": SERVER_PORT,
+                })
+                _SUB_DIR = CURRENT_DIR[len(BO_WORKDIR)+1:]
+                client.run_command(_SUB_DIR, [cmd_value])
+                sys.exit(0)
+            else:
+                fatal(701, "Unexpected '" + cmd_target + "' in command '" + _cmd + "'")
         sys.exit(0)
 
-
-sys.exit("Could not understand please call 'bo help'")
+fatal(104, "Could not understand please call 'bo help'")
