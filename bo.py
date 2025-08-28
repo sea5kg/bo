@@ -426,8 +426,8 @@ class BoClientSocketHandler:
             "Updated %s/%s at %s seconds. Time remaining: %s seconds",
             str(_files_syncked),
             str(_files_to_updating),
-            "{:.2f}".format(_elapsed),
-            "{:.2f}".format(_remaining)
+            f"{_elapsed:.2f}",
+            f"{_remaining:.2f}"
         )
 
     def run_sync(self, _files: BoFilesCache):
@@ -823,10 +823,13 @@ ARGS = BoCommandArgsParser()
 
 RESERVED_SUBCOMMAND_0 = ["config", "sync", "server", "remote"]
 
-if ARGS.has_arg(["help", "/?", "-h", "--help"]):
+
+def print_help():
+    """ print help """
     print(
         "Usage:\n"
         "    'bo config init' - add current directory to config\n"
+        "    'bo config info' - print info about current directory\n"
         "    'bo config deinit' - remove current directory from config\n"
         "    'bo config command' - Init command for current directory\n"
         "    'bo config remove-command <cmd_name>' - Init command for current directory\n"
@@ -838,6 +841,10 @@ if ARGS.has_arg(["help", "/?", "-h", "--help"]):
         "    'bo server' - start server\n"
         "\n"
     )
+
+
+if ARGS.has_arg(["help", "/?", "-h", "--help"]):
+    print_help()
     sys.exit(0)
 
 
@@ -966,7 +973,19 @@ if ARGS.get_arg(0) == "config":
         sys.exit(0)
     elif ARGS.get_arg(1) == "path":
         print("BO_CONFIG_FILEPATH: " + BO_CONFIG_FILEPATH)
+    elif ARGS.get_arg(1) == "info":
+        if BO_WORKDIR is None:
+            fatal(4, "Not initialized current directory: " + CURRENT_DIR)
+        cfg = BO_CONFIG["workdirs"][BO_WORKDIR]
+        print()
+        print("Workdir: " + BO_WORKDIR)
+        host_port = cfg["servers"]["base"]["host"] + ":" + str(cfg["servers"]["base"]["port"])
+        print("Target host: " + host_port)
+        print("Target directory: " + cfg["servers"]["base"]["target_dir"])
+        print("Cache Files Info: " + cfg["servers"]["base"]["cache_path"])
+        print()
     else:
+        print_help()
         fatal(3, "Unknown sub command '" + ARGS.get_arg(1) + "'")
     sys.exit(0)
 
