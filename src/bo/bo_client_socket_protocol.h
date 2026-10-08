@@ -1,26 +1,34 @@
+// bo_client_socket_protocol.h
 #pragma once
 
 #include <string>
 
+#include "bo_utils.h"
+
 class BoClientSocketProtocol {
 public:
-  BoClientSocketProtocol(const std::string &host, int port, int timeout = 15);
-  ~BoClientSocketProtocol();
+    BoClientSocketProtocol(const std::string &host, int port, int timeout = 15);
+    ~BoClientSocketProtocol();
 
-  BoClientSocketProtocol(const BoClientSocketProtocol &) = delete;
-  BoClientSocketProtocol &operator=(const BoClientSocketProtocol &) = delete;
+    BoClientSocketProtocol(const BoClientSocketProtocol &) = delete;
+    BoClientSocketProtocol &operator=(const BoClientSocketProtocol &) = delete;
 
-  BoClientSocketProtocol(BoClientSocketProtocol &&other) noexcept;
-  BoClientSocketProtocol &operator=(BoClientSocketProtocol &&other) noexcept;
+    BoClientSocketProtocol(BoClientSocketProtocol &&other) noexcept;
+    BoClientSocketProtocol &operator=(BoClientSocketProtocol &&other) noexcept;
 
-  void send_param(const std::string &name, const std::string &value);
-  std::string action_request();
-  bool output_request();
-  void send_file(const std::string &filepath);
+    void send_param(const std::string &name, const std::string &value);
+    std::string action_request();
+    bool output_request();
+    void send_file(const std::string &filepath);
 
 private:
-  std::string host_;
-  int port_;
-  int timeout_;
-  int sock_ = -1;
+    std::string host_;
+    int         port_;
+    int         timeout_;
+
+#ifdef _WIN32
+    SOCKET sock_ = INVALID_SOCKET;
+#else
+    int    sock_ = -1;
+#endif
 };

@@ -21,11 +21,7 @@
 #include <thread>
 #include <vector>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "bo/bo_client_socket_protocol.h"
 #include "bo/bo_utils.h"
@@ -466,6 +462,8 @@ int main(int argc, char **argv) {
       << "Welcome to bo (" << VERSION << ") c++ version!\n"
       << "Utility for sync files (like rsync) and "
          "run build on remote server (or Virtual Machine in local network).\n";
+
+  bo::init_win_sockets _init_win_sockets_;
 
   BoConfig config;
   config.init();
