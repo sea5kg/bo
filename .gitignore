@@ -173,3 +173,6 @@ cython_debug/
 /bo
 /Win64x
 /*.cbproj.local
+/bo.exe
+/bo.map
+/bo.pdb
