@@ -172,3 +172,4 @@ cython_debug/
 /tmp
 /bo
 /Win64x
+/*.cbproj.local
