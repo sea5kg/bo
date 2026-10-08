@@ -595,9 +595,9 @@ static void print_help() {
 }
 
 int main(int argc, char** argv) {
-    std::cout << "Welcome to bo (" << VERSION << ")!\n"
-              << "Utilite for sync files (like rsync) and "
-                 "run build on remote server (or Virtual Machine in local network)\n";
+    std::cout << "Welcome to bo (" << VERSION << ") c++ version!\n"
+              << "Utility for sync files (like rsync) and "
+                 "run build on remote server (or Virtual Machine in local network).\n";
 
     BoConfig config;
     config.init();
