@@ -17,6 +17,8 @@ set(EXECUTABLE_OUTPUT_PATH ${bo_SOURCE_DIR})
 list (APPEND WSJCPP_INCLUDE_DIRS "src")
 
 # main
+list (APPEND WSJCPP_SOURCES "src/bo/bo_utils.cpp")
+list (APPEND WSJCPP_SOURCES "src/bo/bo_client_socket_protocol.cpp")
 list (APPEND WSJCPP_SOURCES "src/main.cpp")
 
 include_directories(${WSJCPP_INCLUDE_DIRS})

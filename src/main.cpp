@@ -25,6 +25,9 @@
 
 #include <openssl/md5.h>
 
+#include "bo/bo_client_socket_protocol.h"
+#include "bo/bo_utils.h"
+
 namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------
@@ -34,14 +37,6 @@ constexpr const char *VERSION = "v0.0.2";
 constexpr size_t BUF_READ_SIZE = 65536;
 constexpr size_t SEND_BUFFER = 512;
 constexpr int DEFAULT_PORT = 4319;
-
-// ---------------------------------------------------------------
-// Утилиты
-// ---------------------------------------------------------------
-[[noreturn]] void fatal(int code, const std::string &msg) {
-  std::cerr << "\nERROR (" << code << ") " << msg << "\n";
-  std::exit(-1);
-}
 
 std::string md5_by_file(const std::string &path) {
   std::ifstream f(path, std::ios::binary);
@@ -71,14 +66,6 @@ std::string md5_by_string(const std::string &s) {
   for (int i = 0; i < MD5_DIGEST_LENGTH; ++i)
     std::snprintf(hex + i * 2, 3, "%02x", digest[i]);
   return std::string(hex, 32);
-}
-
-std::string trim(const std::string &s) {
-  size_t a = s.find_first_not_of(" \t\r\n");
-  if (a == std::string::npos)
-    return "";
-  size_t b = s.find_last_not_of(" \t\r\n");
-  return s.substr(a, b - a + 1);
 }
 
 // Рекурсивный обход каталога (без .git)
@@ -250,120 +237,6 @@ private:
         << info.size << '|' << info.last_modify << '\n';
     }
   }
-};
-
-// ---------------------------------------------------------------
-// Сокетный протокол (клиент)
-// ---------------------------------------------------------------
-class BoClientSocketProtocol {
-public:
-  BoClientSocketProtocol(const std::string &host, int port, int timeout = 15)
-      : host_(host), port_(port), timeout_(timeout) {
-    sock_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (sock_ < 0)
-      fatal(10, "Socket creation failed");
-
-    if (timeout_ > 0) {
-      struct timeval tv{timeout_, 0};
-      setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-      setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(port_));
-    inet_pton(AF_INET, host_.c_str(), &addr.sin_addr);
-
-    if (::connect(sock_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) <
-        0) {
-      if (errno == ECONNREFUSED)
-        fatal(9, "Connection refused");
-      fatal(10, std::string("Socket error: ") + std::strerror(errno));
-    }
-
-    char buf[1024] = {0};
-    ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
-    if (n > 0) {
-      std::string welcome(buf, n);
-      std::cout << "WELCOME " << trim(welcome) << "\n";
-    }
-  }
-
-  ~BoClientSocketProtocol() {
-    if (sock_ >= 0)
-      ::close(sock_);
-  }
-
-  void send_param(const std::string &name, const std::string &value) {
-    std::string cmd = name + " " + value + "\n";
-    ::send(sock_, cmd.data(), cmd.size(), 0);
-    char buf[1024] = {0};
-    ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
-    if (n <= 0 || std::string(buf, 8) != "ACCEPTED") {
-      fatal(557, std::string("Expected [ACCEPTED] but got [") +
-                     std::string(buf, n > 0 ? n : 0) + "]");
-    }
-  }
-
-  std::string action_request() {
-    std::string cmd = "ACTION_REQUEST\n";
-    ::send(sock_, cmd.data(), cmd.size(), 0);
-    char buf[1024] = {0};
-    ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
-    if (n <= 0)
-      return "NO_CONNECTION";
-    return trim(std::string(buf, n));
-  }
-
-  // Возвращает true, если ещё есть вывод
-  bool output_request() {
-    std::string cmd = "OUTPUT_REQUEST\n";
-    ::send(sock_, cmd.data(), cmd.size(), 0);
-    char buf[4096] = {0};
-    ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
-    if (n <= 0)
-      return false;
-    std::string resp(buf, n);
-    if (resp.rfind("OUTPUT ", 0) == 0) {
-      std::cout << resp.substr(7) << std::flush;
-      return true;
-    }
-    if (resp.rfind("OUTPUT_FINISHED ", 0) == 0) {
-      std::cout << ">>>> Exit status: " << resp.substr(16) << "\n\n";
-      return false;
-    }
-    if (resp.rfind("OUTPUT_FAILED ", 0) == 0) {
-      std::cout << ">>>> FAILED status: " << resp.substr(14) << "\n\n";
-      return false;
-    }
-    return true;
-  }
-
-  void send_file(const std::string &filepath) {
-    std::ifstream f(filepath, std::ios::binary);
-    if (!f)
-      fatal(600, "Cannot open file " + filepath);
-    std::vector<char> buf(SEND_BUFFER);
-    while (f) {
-      f.read(buf.data(), buf.size());
-      std::streamsize n = f.gcount();
-      if (n > 0)
-        ::send(sock_, buf.data(), static_cast<size_t>(n), 0);
-    }
-    ::send(sock_, "", 0, 0);
-    char resp[1024] = {0};
-    ssize_t n = ::recv(sock_, resp, sizeof(resp) - 1, 0);
-    if (n <= 0 || std::string(resp, 8) != "ACCEPTED") {
-      fatal(8, std::string("Expected [ACCEPTED] but got [") +
-                   std::string(resp, n > 0 ? n : 0) + "]");
-    }
-  }
-
-private:
-  std::string host_;
-  int port_;
-  int timeout_;
-  int sock_ = -1;
 };
 
 // ---------------------------------------------------------------
