@@ -2,6 +2,10 @@
 // Аналог утилиты "bo" на C++17
 // Компиляция: g++ -std=c++17 -O2 -pthread bo.cpp -o bo -lssl -lcrypto
 
+#ifdef _WIN32
+#include <tchar.h>
+#endif
+
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
