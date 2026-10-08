@@ -9,28 +9,21 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
-
-// ---------------------------------------------------------------
-// Внешние зависимости (определены в другом модуле проекта)
-// ---------------------------------------------------------------
-// fatal() и trim() объявлены в общем заголовке проекта,
-// например в "bo_utils.h". Здесь подключаем его:
 #include "bo_utils.h"
 
 namespace {
+
 constexpr size_t SEND_BUFFER = 512;
+
 }
 
-// ---------------------------------------------------------------
-// Конструктор / деструктор
-// ---------------------------------------------------------------
 BoClientSocketProtocol::BoClientSocketProtocol(const std::string &host,
                                                int port, int timeout)
     : host_(host), port_(port), timeout_(timeout) {
 
   sock_ = ::socket(AF_INET, SOCK_STREAM, 0);
   if (sock_ < 0)
-    fatal(10, "Socket creation failed");
+    bo::fatal(10, "Socket creation failed");
 
   if (timeout_ > 0) {
     struct timeval tv{timeout_, 0};
@@ -45,15 +38,15 @@ BoClientSocketProtocol::BoClientSocketProtocol(const std::string &host,
 
   if (::connect(sock_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
     if (errno == ECONNREFUSED)
-      fatal(9, "Connection refused");
-    fatal(10, std::string("Socket error: ") + std::strerror(errno));
+      bo::fatal(9, "Connection refused");
+    bo::fatal(10, std::string("Socket error: ") + std::strerror(errno));
   }
 
   char buf[1024] = {0};
   ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
   if (n > 0) {
     std::string welcome(buf, static_cast<size_t>(n));
-    std::cout << "WELCOME " << trim(welcome) << "\n";
+    std::cout << "WELCOME " << bo::trim(welcome) << "\n";
   }
 }
 
@@ -62,9 +55,6 @@ BoClientSocketProtocol::~BoClientSocketProtocol() {
     ::close(sock_);
 }
 
-// ---------------------------------------------------------------
-// Перемещение
-// ---------------------------------------------------------------
 BoClientSocketProtocol::BoClientSocketProtocol(
     BoClientSocketProtocol &&other) noexcept
     : host_(std::move(other.host_)), port_(other.port_),
@@ -97,7 +87,7 @@ void BoClientSocketProtocol::send_param(const std::string &name,
   char buf[1024] = {0};
   ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
   if (n <= 0 || std::string(buf, 8) != "ACCEPTED") {
-    fatal(557, std::string("Expected [ACCEPTED] but got [") +
+    bo::fatal(557, std::string("Expected [ACCEPTED] but got [") +
                    std::string(buf, n > 0 ? static_cast<size_t>(n) : 0) + "]");
   }
 }
@@ -113,7 +103,7 @@ std::string BoClientSocketProtocol::action_request() {
   ssize_t n = ::recv(sock_, buf, sizeof(buf) - 1, 0);
   if (n <= 0)
     return "NO_CONNECTION";
-  return trim(std::string(buf, static_cast<size_t>(n)));
+  return bo::trim(std::string(buf, static_cast<size_t>(n)));
 }
 
 // ---------------------------------------------------------------
@@ -148,7 +138,7 @@ bool BoClientSocketProtocol::output_request() {
 void BoClientSocketProtocol::send_file(const std::string &filepath) {
   std::ifstream f(filepath, std::ios::binary);
   if (!f)
-    fatal(600, "Cannot open file " + filepath);
+    bo::fatal(600, "Cannot open file " + filepath);
 
   std::vector<char> buf(SEND_BUFFER);
   while (f) {
@@ -162,7 +152,7 @@ void BoClientSocketProtocol::send_file(const std::string &filepath) {
   char resp[1024] = {0};
   ssize_t n = ::recv(sock_, resp, sizeof(resp) - 1, 0);
   if (n <= 0 || std::string(resp, 8) != "ACCEPTED") {
-    fatal(8, std::string("Expected [ACCEPTED] but got [") +
+    bo::fatal(8, std::string("Expected [ACCEPTED] but got [") +
                  std::string(resp, n > 0 ? static_cast<size_t>(n) : 0) + "]");
   }
 }

@@ -23,52 +23,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <openssl/md5.h>
-
 #include "bo/bo_client_socket_protocol.h"
 #include "bo/bo_utils.h"
 
 namespace fs = std::filesystem;
 
-// ---------------------------------------------------------------
-// Константы и глобальные настройки
-// ---------------------------------------------------------------
 constexpr const char *VERSION = "v0.0.2";
 constexpr size_t BUF_READ_SIZE = 65536;
 constexpr size_t SEND_BUFFER = 512;
 constexpr int DEFAULT_PORT = 4319;
 
-std::string md5_by_file(const std::string &path) {
-  std::ifstream f(path, std::ios::binary);
-  if (!f)
-    return "d41d8cd98f00b204e9800998ecf8427e";
-  MD5_CTX ctx;
-  MD5_Init(&ctx);
-  std::vector<char> buf(BUF_READ_SIZE);
-  while (f) {
-    f.read(buf.data(), buf.size());
-    std::streamsize n = f.gcount();
-    if (n > 0)
-      MD5_Update(&ctx, buf.data(), static_cast<size_t>(n));
-  }
-  unsigned char digest[MD5_DIGEST_LENGTH];
-  MD5_Final(digest, &ctx);
-  char hex[33];
-  for (int i = 0; i < MD5_DIGEST_LENGTH; ++i)
-    std::snprintf(hex + i * 2, 3, "%02x", digest[i]);
-  return std::string(hex, 32);
-}
-
-std::string md5_by_string(const std::string &s) {
-  unsigned char digest[MD5_DIGEST_LENGTH];
-  MD5(reinterpret_cast<const unsigned char *>(s.data()), s.size(), digest);
-  char hex[33];
-  for (int i = 0; i < MD5_DIGEST_LENGTH; ++i)
-    std::snprintf(hex + i * 2, 3, "%02x", digest[i]);
-  return std::string(hex, 32);
-}
-
-// Рекурсивный обход каталога (без .git)
 std::vector<std::string> get_all_files(const fs::path &startdir) {
   std::vector<std::string> result;
   for (auto it = fs::recursive_directory_iterator(
@@ -86,9 +50,6 @@ std::vector<std::string> get_all_files(const fs::path &startdir) {
   return result;
 }
 
-// ---------------------------------------------------------------
-// Кэш файлов
-// ---------------------------------------------------------------
 struct FileInfo {
   std::string required_sync = "NONE"; // NONE / UPDATE / DELETE
   std::string md5;
@@ -111,7 +72,7 @@ public:
   void add(const std::string &file, const fs::path &fullpath) {
     FileInfo info;
     info.required_sync = "UPDATE";
-    info.md5 = md5_by_file(fullpath.string());
+    info.md5 = bo::md5_by_file(fullpath.string());
     info.size = static_cast<long long>(fs::file_size(fullpath));
     auto ftime = fs::last_write_time(fullpath);
     info.last_modify =
@@ -167,7 +128,7 @@ public:
                 .count());
         if (mtime != info.last_modify) {
           info.required_sync = "UPDATE";
-          info.md5 = md5_by_file(full.string());
+          info.md5 = bo::md5_by_file(full.string());
           info.size = static_cast<long long>(fs::file_size(full));
           info.last_modify = mtime;
           ++changes;
@@ -239,9 +200,6 @@ private:
   }
 };
 
-// ---------------------------------------------------------------
-// Клиентский обработчик
-// ---------------------------------------------------------------
 class BoClientSocketHandler {
 public:
   BoClientSocketHandler(const std::string &host, int port,
@@ -249,7 +207,7 @@ public:
       : host_(host), port_(port), target_dir_(target_dir) {}
 
   void run_sync(FilesCache &cache) {
-    std::string cache_md5 = md5_by_file(cache.cache_path_to_update());
+    std::string cache_md5 = bo::md5_by_file(cache.cache_path_to_update());
     long long cache_size =
         static_cast<long long>(fs::file_size(cache.cache_path_to_update()));
 
@@ -348,7 +306,7 @@ public:
     addr.sin_port = htons(static_cast<uint16_t>(port_));
 
     if (::bind(srv, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0)
-      fatal(20, "Bind failed");
+      bo::fatal(20, "Bind failed");
     ::listen(srv, 10);
 
     std::cout << "Start service listening " << host_ << ":" << port_ << "\n";
@@ -378,7 +336,7 @@ private:
       if (n <= 0)
         break;
       buf[n] = '\0';
-      std::string line = trim(buf);
+      std::string line = bo::trim(buf);
 
       if (line.rfind("TARGET_DIR ", 0) == 0) {
         ::send(sock, "ACCEPTED", 8, 0);
@@ -431,23 +389,23 @@ public:
     WorkdirConfig cur;
     bool in_workdir = false;
     while (std::getline(f, line)) {
-      line = trim(line);
+      line = bo::trim(line);
       if (line.empty())
         continue;
       if (line.rfind("workdir:", 0) == 0) {
         if (in_workdir)
           workdirs.push_back(cur);
         cur = WorkdirConfig{};
-        cur.workdir = trim(line.substr(8));
+        cur.workdir = bo::trim(line.substr(8));
         in_workdir = true;
       } else if (line.rfind("host:", 0) == 0) {
-        cur.server.host = trim(line.substr(5));
+        cur.server.host = bo::trim(line.substr(5));
       } else if (line.rfind("port:", 0) == 0) {
-        cur.server.port = std::stoi(trim(line.substr(5)));
+        cur.server.port = std::stoi(bo::trim(line.substr(5)));
       } else if (line.rfind("target_dir:", 0) == 0) {
-        cur.server.target_dir = trim(line.substr(11));
+        cur.server.target_dir = bo::trim(line.substr(11));
       } else if (line.rfind("cache_path:", 0) == 0) {
-        cur.server.cache_path = trim(line.substr(11));
+        cur.server.cache_path = bo::trim(line.substr(11));
       }
     }
     if (in_workdir)
@@ -536,7 +494,7 @@ int main(int argc, char **argv) {
 
     if (sub == "init") {
       if (config.find_exact(cur))
-        fatal(4, "Already initialized directory: " + cur);
+        bo::fatal(4, "Already initialized directory: " + cur);
       std::string server, target;
       std::cout << "Server: ";
       std::getline(std::cin, server);
@@ -544,19 +502,19 @@ int main(int argc, char **argv) {
       std::getline(std::cin, target);
       WorkdirConfig w;
       w.workdir = cur;
-      w.server.host = trim(server);
+      w.server.host = bo::trim(server);
       w.server.port = DEFAULT_PORT;
-      w.server.target_dir = trim(target);
+      w.server.target_dir = bo::trim(target);
       std::string hash_src =
           cur + "|" + w.server.target_dir + "|" + w.server.host;
       w.server.cache_path =
-          config.home_dir + "/" + md5_by_string(hash_src) + ".yml";
+          config.home_dir + "/" + bo::md5_by_string(hash_src) + ".yml";
       config.workdirs.push_back(w);
       config.save();
       std::cout << "Done.\n";
     } else if (sub == "deinit") {
       if (!wd)
-        fatal(5, "Not found initialize directory: " + cur);
+        bo::fatal(5, "Not found initialize directory: " + cur);
       for (size_t i = 0; i < config.workdirs.size(); ++i)
         if (config.workdirs[i].workdir == wd->workdir) {
           config.workdirs.erase(config.workdirs.begin() + i);
@@ -577,7 +535,7 @@ int main(int argc, char **argv) {
       std::cout << "BO_CONFIG_FILEPATH: " << config.config_path << "\n";
     } else if (sub == "info") {
       if (!wd)
-        fatal(4, "Not initialized current directory: " + cur);
+        bo::fatal(4, "Not initialized current directory: " + cur);
       std::cout << "\nWorkdir: " << wd->workdir << "\n";
       std::cout << "Target host: " << wd->server.host << ":" << wd->server.port
                 << "\n";
@@ -585,14 +543,14 @@ int main(int argc, char **argv) {
       std::cout << "Cache Files Info: " << wd->server.cache_path << "\n\n";
     } else {
       print_help();
-      fatal(3, "Unknown sub command '" + sub + "'");
+      bo::fatal(3, "Unknown sub command '" + sub + "'");
     }
     return 0;
   }
 
   if (args[0] == "sync") {
     if (!wd)
-      fatal(6, "Not found config for directory: " + cur);
+      bo::fatal(6, "Not found config for directory: " + cur);
     bool force = has_arg({"-f", "--force"});
     std::cout << "Start syncing files\n    >from: " << wd->workdir
               << "\n    >to: " << wd->server.host << ":" << wd->server.port
@@ -617,9 +575,9 @@ int main(int argc, char **argv) {
 
   if (args[0] == "remote") {
     if (!wd)
-      fatal(6, "Not found config for directory: " + cur);
+      bo::fatal(6, "Not found config for directory: " + cur);
     if (args.size() < 3)
-      fatal(10, "Usage: bo remote run <cmd> ...");
+      bo::fatal(10, "Usage: bo remote run <cmd> ...");
     if (args[1] == "run") {
       std::cout << "Run command on remote host " << wd->server.host << ":"
                 << wd->server.port << "\n";
@@ -631,21 +589,21 @@ int main(int argc, char **argv) {
       handler.run_command(subdir, cmds);
       return 0;
     }
-    fatal(11, "Unknown remote subcommand '" + args[1] + "'");
+    bo::fatal(11, "Unknown remote subcommand '" + args[1] + "'");
   }
 
   if (wd && wd->commands.count(args[0])) {
     for (const auto &cmd : wd->commands[args[0]]) {
       auto pos = cmd.find(':');
       if (pos == std::string::npos)
-        fatal(701, "Expected '<target>: ...' in command");
-      std::string target = trim(cmd.substr(0, pos));
-      std::string value = trim(cmd.substr(pos + 1));
+        bo::fatal(701, "Expected '<target>: ...' in command");
+      std::string target = bo::trim(cmd.substr(0, pos));
+      std::string value = bo::trim(cmd.substr(pos + 1));
 
       if (target == "local") {
         std::cout << "local> " << value << "\n";
         if (std::system(value.c_str()) != 0)
-          fatal(702, "Local command failed: " + value);
+          bo::fatal(702, "Local command failed: " + value);
       } else if (target == "remote-run") {
         std::cout << "remote-run (" << wd->server.host << ":" << wd->server.port
                   << ")> " << value << "\n";
@@ -654,12 +612,12 @@ int main(int argc, char **argv) {
                                       wd->server.target_dir);
         handler.run_command(subdir, {value});
       } else {
-        fatal(701, "Unexpected target '" + target + "' in command");
+        bo::fatal(701, "Unexpected target '" + target + "' in command");
       }
     }
     return 0;
   }
 
   print_help();
-  fatal(104, "Could not understand please call 'bo help'");
+  bo::fatal(104, "Could not understand please call 'bo help'");
 }

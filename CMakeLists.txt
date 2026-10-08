@@ -16,7 +16,7 @@ set(EXECUTABLE_OUTPUT_PATH ${bo_SOURCE_DIR})
 # include header dirs
 list (APPEND WSJCPP_INCLUDE_DIRS "src")
 
-# main
+list (APPEND WSJCPP_SOURCES "src/third_party/md5/md5.cpp")
 list (APPEND WSJCPP_SOURCES "src/bo/bo_utils.cpp")
 list (APPEND WSJCPP_SOURCES "src/bo/bo_client_socket_protocol.cpp")
 list (APPEND WSJCPP_SOURCES "src/main.cpp")
@@ -25,7 +25,7 @@ include_directories(${WSJCPP_INCLUDE_DIRS})
 
 add_executable (bo ${WSJCPP_SOURCES})
 
-target_link_libraries(bo -lpthread -lssl -lcrypto ${WSJCPP_LIBRARIES} )
+target_link_libraries(bo -lpthread ${WSJCPP_LIBRARIES} )
 
 install(
     TARGETS
