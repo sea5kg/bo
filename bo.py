@@ -420,8 +420,10 @@ class BoClientSocketHandler:
         end_time = time.time()
         _elapsed = end_time - start_time
         _remaining = _files_to_updating - _files_syncked
-        if _remaining > 0:
-            _remaining = _remaining / (_files_syncked / _elapsed)
+        if _elapsed > 0:
+            _t = _files_syncked / _elapsed
+            if _remaining > 0 and _t > 0:
+                _remaining = _remaining / _t
         self.__log.info(
             "Updated %s/%s at %s seconds. Time remaining: %s seconds",
             str(_files_syncked),
