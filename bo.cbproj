@@ -128,10 +128,16 @@
         <BCC_UseClassicCompiler>false</BCC_UseClassicCompiler>
     </PropertyGroup>
     <ItemGroup>
-        <CppCompile Include="src\main.cpp">
+        <CppCompile Include="src\bo\bo_client_socket_protocol.cpp">
             <BuildOrder>1</BuildOrder>
         </CppCompile>
         <CppCompile Include="src\bo\bo_utils.cpp">
+            <BuildOrder>1</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="src\third_party\md5\md5.cpp">
+            <BuildOrder>1</BuildOrder>
+        </CppCompile>
+        <CppCompile Include="src\main.cpp">
             <BuildOrder>1</BuildOrder>
         </CppCompile>
         <BuildConfiguration Include="Base">
