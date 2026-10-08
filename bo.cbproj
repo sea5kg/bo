@@ -134,6 +134,9 @@
         <CppCompile Include="src\bo\bo_utils.cpp">
             <BuildOrder>1</BuildOrder>
         </CppCompile>
+        <CppCompile Include="src\bo\bo_server.cpp">
+            <BuildOrder>1</BuildOrder>
+        </CppCompile>
         <CppCompile Include="src\third_party\md5\md5.cpp">
             <BuildOrder>1</BuildOrder>
         </CppCompile>

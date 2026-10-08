@@ -25,6 +25,8 @@
 
 #include "bo/bo_client_socket_protocol.h"
 #include "bo/bo_utils.h"
+#include "bo/bo_server.h"
+
 
 namespace fs = std::filesystem;
 
@@ -288,71 +290,6 @@ private:
   std::string workdir_;
 };
 
-// ---------------------------------------------------------------
-// Сервер (упрощённый)
-// ---------------------------------------------------------------
-class BoServer {
-public:
-  BoServer(const std::string &host, int port) : host_(host), port_(port) {}
-
-  void start() {
-    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
-    int opt = 1;
-    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(static_cast<uint16_t>(port_));
-
-    if (::bind(srv, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0)
-      bo::fatal(20, "Bind failed");
-    ::listen(srv, 10);
-
-    std::cout << "Start service listening " << host_ << ":" << port_ << "\n";
-
-    while (true) {
-      sockaddr_in cli{};
-      socklen_t len = sizeof(cli);
-      int cli_sock = ::accept(srv, reinterpret_cast<sockaddr *>(&cli), &len);
-      if (cli_sock < 0)
-        continue;
-      std::thread([cli_sock] { handle_client(cli_sock); }).detach();
-    }
-  }
-
-private:
-  std::string host_;
-  int port_;
-
-  static void handle_client(int sock) {
-    std::string welcome =
-        std::string("Welcome to bo server (") + VERSION + ")\nTARGET_DIR? ";
-    ::send(sock, welcome.data(), welcome.size(), 0);
-
-    char buf[1024];
-    while (true) {
-      ssize_t n = ::recv(sock, buf, sizeof(buf) - 1, 0);
-      if (n <= 0)
-        break;
-      buf[n] = '\0';
-      std::string line = bo::trim(buf);
-
-      if (line.rfind("TARGET_DIR ", 0) == 0) {
-        ::send(sock, "ACCEPTED", 8, 0);
-      } else if (line == "ACTION_REQUEST") {
-        ::send(sock, "ACTIONS_COMPLETED", 17, 0);
-      } else {
-        ::send(sock, "ACCEPTED", 8, 0);
-      }
-    }
-    ::close(sock);
-  }
-};
-
-// ---------------------------------------------------------------
-// Конфигурация (простой текстовый формат)
-// ---------------------------------------------------------------
 struct ServerConfig {
   std::string host = "127.0.0.1";
   int port = DEFAULT_PORT;
@@ -570,7 +507,7 @@ int main(int argc, char **argv) {
   }
 
   if (args[0] == "server") {
-    BoServer server("0.0.0.0", DEFAULT_PORT);
+    bo::BoServer server("0.0.0.0", DEFAULT_PORT);
     server.start();
     return 0;
   }

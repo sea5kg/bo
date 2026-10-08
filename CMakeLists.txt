@@ -19,6 +19,7 @@ list (APPEND WSJCPP_INCLUDE_DIRS "src")
 list (APPEND WSJCPP_SOURCES "src/third_party/md5/md5.cpp")
 list (APPEND WSJCPP_SOURCES "src/bo/bo_utils.cpp")
 list (APPEND WSJCPP_SOURCES "src/bo/bo_client_socket_protocol.cpp")
+list (APPEND WSJCPP_SOURCES "src/bo/bo_server.cpp")
 list (APPEND WSJCPP_SOURCES "src/main.cpp")
 
 include_directories(${WSJCPP_INCLUDE_DIRS})
