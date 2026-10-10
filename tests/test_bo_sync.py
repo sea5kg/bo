@@ -19,6 +19,7 @@ import socket
 import subprocess
 import time
 import hashlib
+from contextlib import closing
 
 import yaml
 
@@ -30,6 +31,8 @@ TMP_TEST_BO_SYNC = os.path.join(THIS_DIR, "tmp_test_bo_sync")
 SERVER_PORT = 4319
 SERVER_HOST = "127.0.0.1"
 
+
+# --------------------------------------------------------------------------- helpers
 
 def md5_of_file(path):
     """Return md5 hex digest of a file."""
@@ -47,7 +50,6 @@ def list_files(root):
     """Return dict {relative_path: md5} for all files under root, skipping .git."""
     result = {}
     for dirpath, dirnames, filenames in os.walk(root):
-        # skip .git
         dirnames[:] = [d for d in dirnames if d != ".git"]
         for name in filenames:
             full = os.path.join(dirpath, name)
@@ -57,6 +59,7 @@ def list_files(root):
 
 
 def wait_port(host, port, timeout=5.0):
+    """Wait until TCP port is accepting connections."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -68,6 +71,7 @@ def wait_port(host, port, timeout=5.0):
 
 
 def write_file(path, content):
+    """Write content to a file, creating parent dirs if needed."""
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -81,23 +85,31 @@ def run_sync(workdir, env):
         [sys.executable, BO_PY, "sync"],
         cwd=workdir,
         env=env,
+        check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=60,
     )
-    out = proc.stdout.decode(errors="replace")
-    print(out)
-    if proc.returncode != 0:
-        raise RuntimeError("bo sync failed with code " + str(proc.returncode))
+    print(proc.stdout.decode(errors="replace"))
 
 
-def main():
-    print("=== bo end-to-end test ===")
+def check_trees_match(workdir, target_dir, stage_name, exit_code):
+    """Compare md5 trees and return exit_code (0 if matched)."""
+    expected = list_files(workdir)
+    actual = list_files(target_dir)
+    if expected != actual:
+        print("MISMATCH after " + stage_name + "!")
+        print("expected:", expected)
+        print("actual  :", actual)
+        return exit_code
+    print("OK: trees match after " + stage_name)
+    return 0
 
-    if not os.path.isfile(BO_PY):
-        print("ERROR: bo.py not found at", BO_PY)
-        sys.exit(1)
 
+# --------------------------------------------------------------------------- setup
+
+def prepare_dirs():
+    """Create fresh tmp tree and return (workdir, target_dir, bo_home, env)."""
     if os.path.isdir(TMP_TEST_BO_SYNC):
         shutil.rmtree(TMP_TEST_BO_SYNC, ignore_errors=True)
     os.makedirs(TMP_TEST_BO_SYNC)
@@ -112,131 +124,138 @@ def main():
     print("target_dir:", target_dir)
     print("bo_home   :", bo_home)
 
-    # env for all bo.py subprocesses
     child_env = os.environ.copy()
     child_env["BO_HOME"] = bo_home
+    return workdir, target_dir, bo_home, child_env
 
-    server_proc = None
-    exit_code = 0
 
-    try:
-        # ---- prepare initial files in workdir
-        write_file(os.path.join(workdir, "hello.txt"), "hello world\n")
-        write_file(os.path.join(workdir, "sub", "nested.txt"), "nested content\n")
-        write_file(os.path.join(workdir, "sub", "deep", "deep.txt"), "deep content\n")
-        write_file(os.path.join(workdir, "empty.txt"), "")
+def prepare_initial_files(workdir):
+    """Create initial files in workdir."""
+    write_file(os.path.join(workdir, "hello.txt"), "hello world\n")
+    write_file(os.path.join(workdir, "sub", "nested.txt"), "nested content\n")
+    write_file(os.path.join(workdir, "sub", "deep", "deep.txt"), "deep content\n")
+    write_file(os.path.join(workdir, "empty.txt"), "")
 
-        # ---- write test config inside isolated BO_HOME
-        cache_filename = workdir + "|" + target_dir + "|" + SERVER_HOST
-        cache_path = os.path.join(
-            bo_home,
-            hashlib.md5(cache_filename.encode()).hexdigest() + ".sqlite"
-        )
 
-        cfg = {
-            "bo_version": "test",
-            "workdirs": {
-                workdir: {
-                    "servers": {
-                        "base": {
-                            "host": SERVER_HOST,
-                            "port": SERVER_PORT,
-                            "target_dir": target_dir,
-                            "cache_path": cache_path,
-                        }
+def write_test_config(workdir, target_dir, bo_home):
+    """Write bo config.yml into isolated BO_HOME."""
+    cache_filename = workdir + "|" + target_dir + "|" + SERVER_HOST
+    cache_path = os.path.join(
+        bo_home,
+        hashlib.md5(cache_filename.encode()).hexdigest() + ".sqlite"
+    )
+    cfg = {
+        "bo_version": "test",
+        "workdirs": {
+            workdir: {
+                "servers": {
+                    "base": {
+                        "host": SERVER_HOST,
+                        "port": SERVER_PORT,
+                        "target_dir": target_dir,
+                        "cache_path": cache_path,
                     }
                 }
-            },
-        }
-        config_path = os.path.join(bo_home, "config.yml")
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(cfg, f, indent=2)
-        print("Wrote test config:", config_path)
+            }
+        },
+    }
+    config_path = os.path.join(bo_home, "config.yml")
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, indent=2)
+    print("Wrote test config:", config_path)
+    return config_path
 
-        # ---- start server (with BO_HOME)
-        print("Starting bo server ...")
-        server_proc = subprocess.Popen(
-            [sys.executable, BO_PY, "server"],
-            cwd=TMP_TEST_BO_SYNC,
-            env=child_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        if not wait_port(SERVER_HOST, SERVER_PORT, timeout=5.0):
-            print("ERROR: server did not start on", SERVER_HOST, SERVER_PORT)
-            if server_proc.poll() is not None:
-                print(server_proc.stdout.read().decode(errors="replace"))
-            exit_code = 2
-            return
-        print("Server is up on", SERVER_HOST, SERVER_PORT)
 
-        # ---- first sync
-        print("\n--- first sync ---")
-        run_sync(workdir, child_env)
+# --------------------------------------------------------------------------- main
 
-        expected = list_files(workdir)
-        actual = list_files(target_dir)
-        if expected != actual:
-            print("MISMATCH after first sync!")
-            print("expected:", expected)
-            print("actual  :", actual)
-            exit_code = 3
-            return
-        print("OK: trees match after first sync")
+def main():
+    """Run end-to-end test."""
+    print("=== bo end-to-end test ===")
 
-        # ---- modify files and re-sync
-        print("\n--- modify and re-sync ---")
-        time.sleep(1.1)
-        write_file(os.path.join(workdir, "hello.txt"), "hello world v2\n")
-        write_file(os.path.join(workdir, "new.txt"), "brand new file\n")
-        os.remove(os.path.join(workdir, "empty.txt"))
-        write_file(os.path.join(workdir, "sub", "nested.txt"), "nested v2\n")
-        run_sync(workdir, child_env)
+    if not os.path.isfile(BO_PY):
+        print("ERROR: bo.py not found at", BO_PY)
+        sys.exit(1)
 
-        expected = list_files(workdir)
-        actual = list_files(target_dir)
-        if expected != actual:
-            print("MISMATCH after second sync!")
-            print("expected:", expected)
-            print("actual  :", actual)
-            exit_code = 4
-            return
-        print("OK: trees match after second sync")
+    workdir, target_dir, bo_home, child_env = prepare_dirs()
+    prepare_initial_files(workdir)
+    write_test_config(workdir, target_dir, bo_home)
 
-        # ---- delete files and re-sync
-        print("\n--- delete and re-sync ---")
-        time.sleep(1.1)
-        os.remove(os.path.join(workdir, "new.txt"))
-        shutil.rmtree(os.path.join(workdir, "sub", "deep"))
-        run_sync(workdir, child_env)
+    print("Starting bo server ...")
+    exit_code = 2
 
-        expected = list_files(workdir)
-        actual = list_files(target_dir)
-        if expected != actual:
-            print("MISMATCH after third sync!")
-            print("expected:", expected)
-            print("actual  :", actual)
-            exit_code = 5
-            return
-        print("OK: trees match after third sync")
+    # Popen is a context manager since 3.2: __exit__ closes pipes and waits.
+    # We still terminate explicitly to make sure the child stops.
+    with subprocess.Popen(
+        [sys.executable, BO_PY, "server"],
+        cwd=TMP_TEST_BO_SYNC,
+        env=child_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    ) as server_proc:
+        try:
+            if not wait_port(SERVER_HOST, SERVER_PORT, timeout=5.0):
+                print("ERROR: server did not start on", SERVER_HOST, SERVER_PORT)
+                if server_proc.poll() is not None:
+                    print(server_proc.stdout.read().decode(errors="replace"))
+                exit_code = 2
+            else:
+                print("Server is up on", SERVER_HOST, SERVER_PORT)
+                exit_code = run_test_sequence(workdir, target_dir, child_env)
+        finally:
+            stop_server(server_proc)
 
-        print("\n=== ALL TESTS PASSED ===")
-
-    finally:
-        if server_proc is not None and server_proc.poll() is None:
-            print("\nStopping server ...")
-            server_proc.terminate()
-            try:
-                server_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                server_proc.kill()
-                server_proc.wait(timeout=5)
-            print("Server stopped")
-
-        shutil.rmtree(TMP_TEST_BO_SYNC, ignore_errors=True)
-        print("Cleaned up", TMP_TEST_BO_SYNC)
-
+    shutil.rmtree(TMP_TEST_BO_SYNC, ignore_errors=True)
+    print("Cleaned up", TMP_TEST_BO_SYNC)
     sys.exit(exit_code)
+
+
+def run_test_sequence(workdir, target_dir, child_env):
+    """Run three sync stages, return exit code (0 = all good)."""
+    # ---- first sync
+    print("\n--- first sync ---")
+    run_sync(workdir, child_env)
+    exit_code = check_trees_match(workdir, target_dir, "first sync", 3)
+    if exit_code:
+        return exit_code
+
+    # ---- modify files and re-sync
+    print("\n--- modify and re-sync ---")
+    time.sleep(1.1)
+    write_file(os.path.join(workdir, "hello.txt"), "hello world v2\n")
+    write_file(os.path.join(workdir, "new.txt"), "brand new file\n")
+    os.remove(os.path.join(workdir, "empty.txt"))
+    write_file(os.path.join(workdir, "sub", "nested.txt"), "nested v2\n")
+    run_sync(workdir, child_env)
+    exit_code = check_trees_match(workdir, target_dir, "second sync", 4)
+    if exit_code:
+        return exit_code
+
+    # ---- delete files and re-sync
+    print("\n--- delete and re-sync ---")
+    time.sleep(1.1)
+    os.remove(os.path.join(workdir, "new.txt"))
+    shutil.rmtree(os.path.join(workdir, "sub", "deep"))
+    run_sync(workdir, child_env)
+    exit_code = check_trees_match(workdir, target_dir, "third sync", 5)
+    if exit_code:
+        return exit_code
+
+    print("\n=== ALL TESTS PASSED ===")
+    return 0
+
+
+def stop_server(server_proc):
+    """Terminate server subprocess gracefully, kill if needed."""
+    if server_proc.poll() is not None:
+        return
+    print("\nStopping server ...")
+    server_proc.terminate()
+    try:
+        server_proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        server_proc.kill()
+        server_proc.wait(timeout=5)
+    print("Server stopped")
 
 
 if __name__ == "__main__":
