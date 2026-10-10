@@ -64,10 +64,23 @@ def fatal(error_num, msg):
 
 
 CURRENT_DIR = os.path.normpath(os.path.realpath(os.getcwd()))
+
 # init config in home dir
-BO_HOME_CONFIG_DIR = os.path.join(Path.home(), ".bo-by-sea5kg")
+# BO_HOME env var can override the location (useful for tests).
+# If BO_HOME points to a directory, use it directly.
+# If BO_HOME points to a file, use its parent as the config dir.
+_bo_home_env = os.environ.get("BO_HOME", "").strip()
+if _bo_home_env:
+    _bo_home = os.path.normpath(os.path.expanduser(_bo_home_env))
+    if os.path.isdir(_bo_home):
+        BO_HOME_CONFIG_DIR = _bo_home
+    else:
+        BO_HOME_CONFIG_DIR = os.path.dirname(_bo_home) or _bo_home
+else:
+    BO_HOME_CONFIG_DIR = os.path.join(Path.home(), ".bo-by-sea5kg")
+
 if not os.path.isdir(BO_HOME_CONFIG_DIR):
-    os.mkdir(BO_HOME_CONFIG_DIR)
+    os.makedirs(BO_HOME_CONFIG_DIR, exist_ok=True)
     if not os.path.isdir(BO_HOME_CONFIG_DIR):
         fatal(1, "Could not create directory: '" + BO_HOME_CONFIG_DIR + "'")
 BO_CONFIG_FILEPATH = os.path.join(BO_HOME_CONFIG_DIR, "config.yml")

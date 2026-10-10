@@ -22,6 +22,11 @@ Usage:
 ```
 
 
+Environment:
+
+* `BO_HOME` - for customizing home directory (by default `$HOME/.bo-by-sea5kg`)
+
+
 ## Install (First way)
 
 Ubuntu 24.04:
