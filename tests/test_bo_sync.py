@@ -19,8 +19,6 @@ import socket
 import subprocess
 import time
 import hashlib
-from contextlib import closing
-
 import yaml
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
