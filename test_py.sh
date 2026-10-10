@@ -20,3 +20,9 @@ check_ret $? "pylint bo.py"
 
 python3 -m pycodestyle --max-line-length=100 bo.py
 check_ret $? "pycodestyle bo.py"
+
+python3 -m pylint tests/test_bo_sync.py
+check_ret $? "pylint tests/test_bo_sync.py"
+
+python3 -m pycodestyle --max-line-length=100 tests/test_bo_sync.py
+check_ret $? "pycodestyle tests/test_bo_sync.py"
