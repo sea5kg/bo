@@ -32,6 +32,7 @@ import os
 import sys
 import time
 import socket
+import sqlite3
 import re
 import platform
 import json
@@ -143,100 +144,165 @@ class BoUtils:
 
 
 class BoFilesCache:
-    """ helper class for control of cache """
+    """ helper class for control of cache (SQLite backend) """
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS files (
+        path TEXT PRIMARY KEY,
+        required_sync TEXT NOT NULL DEFAULT 'NONE',
+        md5 TEXT,
+        size INTEGER,
+        last_modify REAL,
+        last_modify_formatted TEXT,
+        version INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_files_required_sync ON files(required_sync);
+    """
 
     def __init__(self, _cache_path):
-        self.__files = {}
-        self.__files_to_update = {}
+        # if config has .yml yet — replace to .sqlite
+        if _cache_path.endswith(".yml"):
+            _cache_path = _cache_path[:-4] + ".sqlite"
         self.__cache_path = _cache_path
-        self.__cache_path_to_update = _cache_path[:-4] + "_to_update.yml"
-        # load
-        if os.path.isfile(self.__cache_path):
-            with open(self.__cache_path, encoding="utf-8") as _file:
-                try:
-                    self.__files = yaml.safe_load(_file)
-                except yaml.YAMLError as _exc:
-                    print(_exc)
-                    sys.exit(_exc)
-        for _file in self.__files:
-            if _file not in self.__files:
-                print("ERROR: File " + _file + " not found in filelist")
-                continue
-            if 'required_sync' not in self.__files[_file]:
-                print("Missing 'required_sync' for a file '" + _file + "'")
-                self.__files[_file]['required_sync'] = 'NONE'
-                continue
-            if self.__files[_file]['required_sync'] != 'NONE':
-                self.__files_to_update[_file] = self.__files[_file]
+        self.__cache_path_to_update = _cache_path + ".to_update.yaml"
+        self.__conn = sqlite3.connect(self.__cache_path)
+        self.__conn.row_factory = sqlite3.Row
+        self.__conn.execute("PRAGMA journal_mode=WAL;")
+        self.__conn.execute("PRAGMA synchronous=NORMAL;")
+        self.__conn.executescript(self.SCHEMA)
+        self.__conn.commit()
 
     def get_cache_path(self):
-        """ return cache path """
+        """ return cache path (sqlite file) """
         return self.__cache_path
 
     def get_cache_path_to_update(self):
-        """ return cache path to_update """
+        """ return path to YAML snapshot used for sending to server """
         return self.__cache_path_to_update
 
-    def has(self, _file):
-        """ is contains file """
-        return _file in self.__files
+    # ------------------------------------------------------------------ CRUD
 
-    def add(self, _file, _fullpath):
-        """ added file to cache """
-        self.__files[_file] = {
-            "required_sync": "UPDATE",
-            "md5": BoUtils.md5_by_file(_fullpath),
-            "size": os.path.getsize(_fullpath),
-            "last_modify": os.path.getmtime(_fullpath),
-            "last_modify_formatted": time.ctime(os.path.getmtime(_fullpath)),
-        }
-        self.__files_to_update[_file] = self.__files[_file]
+    def has(self, _file):
+        """ has file """
+        cur = self.__conn.execute("SELECT 1 FROM files WHERE path = ?", (_file,))
+        return cur.fetchone() is not None
 
     def get(self, _file):
-        """ return file info """
-        return self.__files[_file]
+        """ get file """
+        cur = self.__conn.execute("SELECT * FROM files WHERE path = ?", (_file,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return self.__row_to_dict(row)
+
+    @staticmethod
+    def __row_to_dict(row):
+        return {
+            "required_sync": row["required_sync"],
+            "md5": row["md5"],
+            "size": row["size"],
+            "last_modify": row["last_modify"],
+            "last_modify_formatted": row["last_modify_formatted"],
+            "version": row["version"],
+        }
+
+    def add(self, _file, _fullpath):
+        """ add file """
+        self.__conn.execute(
+            """INSERT OR REPLACE INTO files
+               (path, required_sync, md5, size, last_modify,
+                last_modify_formatted, version)
+               VALUES (?, 'UPDATE', ?, ?, ?, ?, 0)""",
+            (
+                _file,
+                BoUtils.md5_by_file(_fullpath),
+                os.path.getsize(_fullpath),
+                os.path.getmtime(_fullpath),
+                time.ctime(os.path.getmtime(_fullpath)),
+            ),
+        )
+        self.__conn.commit()
 
     def update(self, _file, _info):
         """ update file info """
+        row = self.get(_file)
+        if row is None:
+            self.__conn.execute(
+                """INSERT OR REPLACE INTO files
+                   (path, required_sync, md5, size, last_modify,
+                    last_modify_formatted, version)
+                   VALUES (?, ?, ?, ?, ?, ?, 0)""",
+                (
+                    _file,
+                    _info.get("required_sync", "NONE"),
+                    _info.get("md5"),
+                    _info.get("size"),
+                    _info.get("last_modify"),
+                    _info.get("last_modify_formatted"),
+                ),
+            )
+            self.__conn.commit()
+            return
+
+        merged = dict(row)
         for _key in _info:
-            self.__files[_file][_key] = _info[_key]
-        if 'version' not in self.__files[_file]:
-            self.__files[_file]['version'] = 0
-        self.__files[_file]['version'] += 1
-        if self.__files[_file]['required_sync'] == 'NONE':
-            if _file in self.__files_to_update:
-                del self.__files_to_update[_file]
-        else:
-            self.__files_to_update[_file] = self.__files[_file]
+            merged[_key] = _info[_key]
+        merged["version"] = (merged.get("version") or 0) + 1
+        self.__conn.execute(
+            """UPDATE files SET
+                 required_sync = ?,
+                 md5 = ?,
+                 size = ?,
+                 last_modify = ?,
+                 last_modify_formatted = ?,
+                 version = ?
+               WHERE path = ?""",
+            (
+                merged["required_sync"],
+                merged.get("md5"),
+                merged.get("size"),
+                merged.get("last_modify"),
+                merged.get("last_modify_formatted"),
+                merged["version"],
+                _file,
+            ),
+        )
+        self.__conn.commit()
 
     def remove(self, _file):
-        """ remove file from list """
-        del self.__files[_file]
-        if _file in self.__files_to_update:
-            del self.__files_to_update[_file]
+        """ remove file """
+        self.__conn.execute("DELETE FROM files WHERE path = ?", (_file,))
+        self.__conn.commit()
+
+    # ------------------------------------------------------------------ lists
 
     def get_files(self):
-        """ return all the file list """
-        return self.__files
+        """ return all the file list as dict {path: info} """
+        cur = self.__conn.execute("SELECT * FROM files")
+        return {row["path"]: self.__row_to_dict(row) for row in cur.fetchall()}
 
     def get_files_to_update(self):
-        """ return all the file list """
-        return self.__files_to_update
+        """ return only files with required_sync != 'NONE' """
+        cur = self.__conn.execute(
+            "SELECT * FROM files WHERE required_sync != 'NONE'"
+        )
+        return {row["path"]: self.__row_to_dict(row) for row in cur.fetchall()}
+
+    # ------------------------------------------------------------------ misc
 
     def resave_cache(self):
-        """ resave file """
-        with open(self.__cache_path, 'w', encoding="utf-8") as _file:
-            yaml.dump(self.__files, _file, indent=2)
-        with open(self.__cache_path_to_update, 'w', encoding="utf-8") as _file:
-            yaml.dump(self.__files_to_update, _file, indent=2)
+        """ commit SQLite + write YAML snapshot for transfer """
+        self.__conn.commit()
+        snapshot = self.get_files_to_update()
+        with open(self.__cache_path_to_update, "w", encoding="utf-8") as _file:
+            yaml.dump(snapshot, _file, indent=2)
 
     def get_number_of_files_to_update(self):
-        """ return number of files to update """
-        _files_to_update_counter = 0
-        for _file in self.__files:
-            if self.__files[_file]['required_sync'] != 'NONE':
-                _files_to_update_counter += 1
-        return _files_to_update_counter
+        """ get_number_of_files_to_update """
+        cur = self.__conn.execute(
+            "SELECT COUNT(*) AS c FROM files WHERE required_sync != 'NONE'"
+        )
+        return cur.fetchone()["c"]
 
     def rescan_files(self, _workdir, force_update=False):
         """ Update list of files (scan again) """
@@ -244,14 +310,18 @@ class BoFilesCache:
         _start = time.time()
         current_files = BoUtils.get_all_files(_workdir)
         _changes = 0
+
+        cur = self.__conn.execute("SELECT path FROM files")
+        db_files = {row["path"] for row in cur.fetchall()}
+
         for _file in current_files:
             fullpath = os.path.join(_workdir, _file)
-            if not self.has(_file):
+            if _file not in db_files:
                 self.add(_file, fullpath)
                 _changes += 1
             else:
-                _fileinfo = self.__files[_file]
-                if os.path.getmtime(fullpath) != _fileinfo["last_modify"]:
+                info = self.get(_file)
+                if os.path.getmtime(fullpath) != info["last_modify"]:
                     self.update(_file, {
                         "required_sync": "UPDATE",
                         "md5": BoUtils.md5_by_file(fullpath),
@@ -260,15 +330,17 @@ class BoFilesCache:
                         "last_modify_formatted": time.ctime(os.path.getmtime(fullpath)),
                     })
                 if force_update:
-                    self.update(_file, {
-                        "required_sync": "UPDATE",
-                    })
+                    self.update(_file, {"required_sync": "UPDATE"})
                 if not os.path.isfile(fullpath):
                     self.update(_file, {"required_sync": "DELETE"})
-        for _file in self.__files:
-            if _file not in current_files:
+
+        current_set = set(current_files)
+        for _file in db_files:
+            if _file not in current_set:
                 self.update(_file, {"required_sync": "DELETE"})
                 _changes += 1
+
+        self.__conn.commit()
         _end = time.time()
         print(
             "Done. Found all files:", len(current_files), ". \n"
@@ -483,6 +555,7 @@ class BoClientSocketHandler:
                         _files.resave_cache()
                 else:
                     print("ERROR UNKNOWN ACTION -> ", _action)
+                    break
 
                 _action = _proto.action_request()
             self.__print_statistics(start_time, _files_syncked, _files_to_updating)
