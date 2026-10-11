@@ -22,15 +22,14 @@ import hashlib
 import yaml
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-BO_PY = os.path.normpath(os.path.join(THIS_DIR, "..", "bo.py"))
+BO_APP = os.path.normpath(os.path.join(THIS_DIR, "..", "bo.py"))
+# BO_APP = os.path.normpath(os.path.join(THIS_DIR, "..", "bo"))
 
 TMP_TEST_BO_SYNC = os.path.join(THIS_DIR, "tmp_test_bo_sync")
 
 SERVER_PORT = 4319
 SERVER_HOST = "127.0.0.1"
 
-
-# --------------------------------------------------------------------------- helpers
 
 def md5_of_file(path):
     """Return md5 hex digest of a file."""
@@ -80,7 +79,7 @@ def write_file(path, content):
 def run_sync(workdir, env):
     """Run 'bo.py sync' from workdir with isolated BO_HOME."""
     proc = subprocess.run(
-        [sys.executable, BO_PY, "sync"],
+        [sys.executable, BO_APP, "sync"],
         cwd=workdir,
         env=env,
         check=True,
@@ -103,8 +102,6 @@ def check_trees_match(workdir, target_dir, stage_name, exit_code):
     print("OK: trees match after " + stage_name)
     return 0
 
-
-# --------------------------------------------------------------------------- setup
 
 def prepare_dirs():
     """Create fresh tmp tree and return (workdir, target_dir, bo_home, env)."""
@@ -164,14 +161,12 @@ def write_test_config(workdir, target_dir, bo_home):
     return config_path
 
 
-# --------------------------------------------------------------------------- main
-
 def main():
     """Run end-to-end test."""
     print("=== bo end-to-end test ===")
 
-    if not os.path.isfile(BO_PY):
-        print("ERROR: bo.py not found at", BO_PY)
+    if not os.path.isfile(BO_APP):
+        print("ERROR: bo.py not found at", BO_APP)
         sys.exit(1)
 
     workdir, target_dir, bo_home, child_env = prepare_dirs()
@@ -184,7 +179,7 @@ def main():
     # Popen is a context manager since 3.2: __exit__ closes pipes and waits.
     # We still terminate explicitly to make sure the child stops.
     with subprocess.Popen(
-        [sys.executable, BO_PY, "server"],
+        [sys.executable, BO_APP, "server"],
         cwd=TMP_TEST_BO_SYNC,
         env=child_env,
         stdout=subprocess.PIPE,
