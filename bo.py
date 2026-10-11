@@ -53,7 +53,7 @@ VERSION = "v0.0.2"
 
 print(
     "Welcome to bo (" + VERSION + ")!\n"
-    "Utilite for sync files (like rsync) and "
+    "Utility for sync files (like rsync) and "
     "run build on remote server (or Virtual Machine in local network)\n"
 )
 
@@ -102,10 +102,10 @@ class BoUtils:
     """ BoUtils """
 
     @staticmethod
-    def get_all_files(_startdir):
+    def get_all_files(_start_dir):
         """ recursive find all files in dir """
         _ret = []
-        _rec = [_startdir]
+        _rec = [_start_dir]
         while len(_rec) > 0:
             _dirpath = _rec[0]
             del _rec[0]
@@ -117,7 +117,7 @@ class BoUtils:
                     _rec.append(_filepath)
                     continue
                 if os.path.isfile(_filepath):
-                    _ret.append(_filepath[len(_startdir)+1:])
+                    _ret.append(_filepath[len(_start_dir)+1:])
         return _ret
 
     @staticmethod
@@ -354,14 +354,14 @@ class BoClientSocketProtocol:
     def __init__(self, config, timeout=15):
         self.__config = config
         self.__timeout = timeout
-        self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
+        self.__host_port = self.__config['server_host'] + ":" + str(self.__config['server_port'])
         self.__sock = None
         self.__log = logging.getLogger("BoProtocolSocket")
         self.__log.setLevel(logging.DEBUG)
 
     def __enter__(self):
         try:
-            self.__log.info("Connecting... %s", self.__hostport)
+            self.__log.info("Connecting... %s", self.__host_port)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             if self.__timeout > 0:
                 self.__sock.settimeout(15)
@@ -374,13 +374,13 @@ class BoClientSocketProtocol:
         except socket.timeout:
             self.__sock = None
             fatal(8, "Socket timeout")
-        except socket.error as serr:
-            if serr.errno == errno.ECONNREFUSED:
+        except socket.error as so_err:
+            if so_err.errno == errno.ECONNREFUSED:
                 self.__sock = None
                 fatal(9, "Connection refused")
             else:
                 self.__sock = None
-                fatal(10, "Socker error " + str(serr))
+                fatal(10, "Socket error " + str(so_err))
         except Exception as err:  # pylint: disable=broad-except
             self.__sock = None
             fatal(11, "Exception is " + str(err))
@@ -416,13 +416,13 @@ class BoClientSocketProtocol:
         except socket.timeout:
             self.__sock = None
             fatal(558, "Socket timeout")
-        except socket.error as serr:
-            if serr.errno == errno.ECONNREFUSED:
+        except socket.error as so_err:
+            if so_err.errno == errno.ECONNREFUSED:
                 self.__sock = None
                 fatal(559, "Connection refused")
             else:
                 self.__sock = None
-                fatal(551, "Socker error " + str(serr))
+                fatal(551, "Socket error " + str(so_err))
         except Exception as err:  # pylint: disable=broad-except
             self.__sock = None
             fatal(552, "Exception is " + str(err))
@@ -498,20 +498,20 @@ class BoClientSocketHandler:
         self.__log = logging.getLogger("BoClientSocketHandler")
         self.__log.setLevel(logging.DEBUG)
 
-        # self.__hostport = self.__config['server_host'] + ":" + str(self.__config['server_port'])
+        # self.__host_port = self.__config['server_host'] + ":" + str(self.__config['server_port'])
         # self.__sock = None
 
-    def __print_statistics(self, start_time, _files_syncked, _files_to_updating):
+    def __print_statistics(self, start_time, _files_synced, _files_to_updating):
         end_time = time.time()
         _elapsed = end_time - start_time
-        _remaining = _files_to_updating - _files_syncked
+        _remaining = _files_to_updating - _files_synced
         if _elapsed > 0:
-            _t = _files_syncked / _elapsed
+            _t = _files_synced / _elapsed
             if _remaining > 0 and _t > 0:
                 _remaining = _remaining / _t
         self.__log.info(
             "Updated %s/%s at %s seconds. Time remaining: %s seconds",
-            str(_files_syncked),
+            str(_files_synced),
             str(_files_to_updating),
             f"{_elapsed:.2f}",
             f"{_remaining:.2f}"
@@ -531,7 +531,7 @@ class BoClientSocketHandler:
             _proto.send_file(_files.get_cache_path_to_update())
 
             _action = _proto.action_request()
-            _files_syncked = 0
+            _files_synced = 0
             _files_to_updating = _files.get_number_of_files_to_update()
             _resave_every_files_synced = 100
             start_time = time.time()
@@ -540,25 +540,25 @@ class BoClientSocketHandler:
                     _filename = _action[len("ACTION_DELETED "):]
                     if _files.has(_filename):
                         _files.remove(_filename)
-                    _files_syncked += 1
-                    self.__print_statistics(start_time, _files_syncked, _files_to_updating)
-                    if _files_syncked % _resave_every_files_synced == 0:
+                    _files_synced += 1
+                    self.__print_statistics(start_time, _files_synced, _files_to_updating)
+                    if _files_synced % _resave_every_files_synced == 0:
                         _files.resave_cache()
                 elif _action.startswith("ACTION_SEND_ME_FILE "):
                     _file = _action[len("ACTION_SEND_ME_FILE "):]
                     _fullpath = os.path.join(BO_WORKDIR, _file)
                     _proto.send_file(_fullpath)
                     _files.update(_file, {"required_sync": "NONE"})
-                    _files_syncked += 1
-                    self.__print_statistics(start_time, _files_syncked, _files_to_updating)
-                    if _files_syncked % _resave_every_files_synced == 0:
+                    _files_synced += 1
+                    self.__print_statistics(start_time, _files_synced, _files_to_updating)
+                    if _files_synced % _resave_every_files_synced == 0:
                         _files.resave_cache()
                 else:
                     print("ERROR UNKNOWN ACTION -> ", _action)
                     break
 
                 _action = _proto.action_request()
-            self.__print_statistics(start_time, _files_syncked, _files_to_updating)
+            self.__print_statistics(start_time, _files_synced, _files_to_updating)
             _files.resave_cache()
 
     def run_command(self, _subdir, _command):
@@ -824,21 +824,21 @@ class BoServerSocketHandler(threading.Thread):
             return
         self.__is_kill = True
         self.__sock.close()
-        # thrs.remove(self)
+        # threads.remove(self)
 
 
 class BoServer():
     """
-        Server multitreading implementation
+        Server multithreading implementation
     """
     def __init__(self, host, port):
         self.__host = host
         self.__port = port
-        self.__thrs = []
+        self.__threads = []
 
-    def remove_thread(self, thrd):
+    def remove_thread(self, _thread):
         """ remove from threads """
-        self.__thrs.remove(thrd)
+        self.__threads.remove(_thread)
 
     def start(self):
         """ start server """
@@ -853,12 +853,12 @@ class BoServer():
             while True:
                 _cli_sock, addr = _srv_sock.accept()
                 thr = BoServerSocketHandler(_cli_sock, addr, self)
-                self.__thrs.append(thr)
+                self.__threads.append(thr)
                 thr.start()
         except KeyboardInterrupt:
             print('Bye! Write me letters!')
             _srv_sock.close()
-            for thr in self.__thrs:
+            for thr in self.__threads:
                 thr.kill()
 
 
@@ -888,7 +888,7 @@ class BoCommandArgsParser:
         return False
 
     def get_subcommands_after(self, idx):
-        """ return subcomands """
+        """ return subcommands """
         return self.__subcommands[idx:]
 
 
@@ -964,7 +964,7 @@ if BO_WORKDIR is not None:
 if ARGS.get_arg(0) == "config":
     if ARGS.get_arg(1) == "deinit":
         if BO_WORKDIR is None:
-            fatal(5, "Not found initialize diretory: " + BO_WORKDIR)
+            fatal(5, "Not found initialize directory: " + BO_WORKDIR)
         print("Removing " + BO_WORKDIR + " from config\n")
         del BO_CONFIG["workdirs"][BO_WORKDIR]
         resave_config()
@@ -1137,7 +1137,7 @@ if ARGS.get_arg(0) == "remote":
     # elif ARGS.get_arg(1) == "kill-process":
     #     sys.exit(0)
     else:
-        sys.exit("Unknown subcomannd for remote '" + ARGS.get_arg(1) + "'")
+        sys.exit("Unknown subcommand for remote '" + ARGS.get_arg(1) + "'")
 
 if BO_WORKDIR is not None:
     WORKDIR_CFG = BO_CONFIG["workdirs"][BO_WORKDIR]

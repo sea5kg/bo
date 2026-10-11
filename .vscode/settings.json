@@ -1,6 +1,13 @@
 {
     "C_Cpp.clang_format_style": "file",
-    "cSpell.words": [],
+    "cSpell.words": [
+        "ECONNREFUSED",
+        "Evgenii",
+        "executescript",
+        "rescan",
+        "REUSEADDR",
+        "Sopov"
+    ],
     "github.copilot.chat.mcp.enabled": false,
     "github.copilot.enable": {
         "mcp": false,
