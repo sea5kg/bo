@@ -364,7 +364,7 @@ class BoClientSocketProtocol:
             self.__log.info("Connecting... %s", self.__host_port)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             if self.__timeout > 0:
-                self.__sock.settimeout(15)
+                self.__sock.settimeout(self.__timeout)
             self.__sock.connect((self.__config['server_host'], self.__config['server_port']))
             resp = self.__sock.recv(1024).decode("utf-8")
             resp = resp.strip()
