@@ -521,7 +521,7 @@ class BoClientSocketHandler:
         """ run sync """
         cache_md5 = BoUtils.md5_by_file(_files.get_cache_path_to_update())
         cache_size = os.path.getsize(_files.get_cache_path_to_update())
-        with BoClientSocketProtocol(self.__config, timeout=15) as _proto:
+        with BoClientSocketProtocol(self.__config, timeout=60) as _proto:
             _proto.send_param("TARGET_DIR", self.__config['target_dir'])
             _proto.send_param("CACHE_MD5", cache_md5)
             _proto.send_param("CACHE_SIZE", cache_size)
@@ -690,10 +690,13 @@ class BoServerSocketHandler(threading.Thread):
     def __handle_command_cache_send(self, command):
         if command.get_command() == "CACHE_SEND":
             self.__sock.send("ACCEPTED".encode())
+            print("Receiving cache file")
+            _start = time.time()
             self.__receive_file(
                 "test", self.__options["cache_md5"],
                 self.__options["cache_size"]
             )
+            print("Parsing cache file...")
             if os.path.isfile("test"):
                 with open("test", encoding="utf-8") as _file:
                     try:
@@ -703,6 +706,8 @@ class BoServerSocketHandler(threading.Thread):
                         self.__sock.send("FAILED".encode())
                         return False
                 os.remove("test")
+            _end = time.time()
+            print("Done. Elapsed ", _end - _start, "sec")
         return True
 
     def __handle_command_action_request(self, command):
