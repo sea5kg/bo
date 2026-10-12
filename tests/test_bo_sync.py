@@ -21,11 +21,20 @@ import time
 import hashlib
 import yaml
 
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-BO_APP = os.path.normpath(os.path.join(THIS_DIR, "..", "bo.py"))
-# BO_APP = os.path.normpath(os.path.join(THIS_DIR, "..", "bo"))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PYTHON_VERSION = True
+if PYTHON_VERSION:
+    BO_CMD = [
+        sys.executable,
+        os.path.normpath(os.path.join(SCRIPT_DIR, "..", "bo.py"))
+    ]
+else:  # c++, binary
+    BO_CMD = [
+        os.path.normpath(os.path.join(SCRIPT_DIR, "..", "bo"))
+    ]
 
-TMP_TEST_BO_SYNC = os.path.join(THIS_DIR, "tmp_test_bo_sync")
+
+TMP_TEST_BO_SYNC = os.path.join(SCRIPT_DIR, "tmp_test_bo_sync")
 
 SERVER_PORT = 4319
 SERVER_HOST = "127.0.0.1"
@@ -79,7 +88,7 @@ def write_file(path, content):
 def run_sync(workdir, env):
     """Run 'bo.py sync' from workdir with isolated BO_HOME."""
     proc = subprocess.run(
-        [sys.executable, BO_APP, "sync"],
+        BO_CMD + ["sync"],
         cwd=workdir,
         env=env,
         check=True,
@@ -165,8 +174,8 @@ def main():
     """Run end-to-end test."""
     print("=== bo end-to-end test ===")
 
-    if not os.path.isfile(BO_APP):
-        print("ERROR: bo.py not found at", BO_APP)
+    if not os.path.isfile(BO_CMD[-1]):
+        print("ERROR: bo.py not found at", BO_CMD[-1])
         sys.exit(1)
 
     workdir, target_dir, bo_home, child_env = prepare_dirs()
@@ -179,7 +188,7 @@ def main():
     # Popen is a context manager since 3.2: __exit__ closes pipes and waits.
     # We still terminate explicitly to make sure the child stops.
     with subprocess.Popen(
-        [sys.executable, BO_APP, "server"],
+        BO_CMD + ["server"],
         cwd=TMP_TEST_BO_SYNC,
         env=child_env,
         stdout=subprocess.PIPE,
