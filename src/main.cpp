@@ -10,7 +10,6 @@
 #include <cerrno>
 #include <cstring>
 #include <ctime>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -26,14 +25,11 @@
 #include "bo/bo_client_socket_protocol.h"
 #include "bo/bo_utils.h"
 #include "bo/bo_server.h"
-
+#include "bo/bo_config.h"
 
 namespace fs = std::filesystem;
 
-constexpr const char *VERSION = "v0.0.2";
-constexpr size_t BUF_READ_SIZE = 65536;
-constexpr size_t SEND_BUFFER = 512;
-constexpr int DEFAULT_PORT = 4319;
+
 
 std::vector<std::string> get_all_files(const fs::path &startdir) {
   std::vector<std::string> result;
@@ -217,7 +213,7 @@ public:
     proto.send_param("TARGET_DIR", target_dir_);
     proto.send_param("CACHE_MD5", cache_md5);
     proto.send_param("CACHE_SIZE", std::to_string(cache_size));
-    proto.send_param("SEND_BUFFER_SIZE", std::to_string(SEND_BUFFER));
+    proto.send_param("SEND_BUFFER_SIZE", std::to_string(bo::SEND_BUFFER));
     proto.send_param("CACHE_SEND", "1");
     proto.send_file(cache.cache_path_to_update());
 
@@ -290,99 +286,6 @@ private:
   std::string workdir_;
 };
 
-struct ServerConfig {
-  std::string host = "127.0.0.1";
-  int port = DEFAULT_PORT;
-  std::string target_dir;
-  std::string cache_path;
-};
-
-struct WorkdirConfig {
-  std::string workdir;
-  ServerConfig server; // base
-  std::map<std::string, std::vector<std::string>> commands;
-};
-
-class BoConfig {
-public:
-  std::string config_path;
-  std::string bo_home_config_dir;
-  std::vector<WorkdirConfig> workdirs;
-
-  void init() {
-    const char *bo_home = std::getenv("BO_HOME");
-    // std::cout << "bo_home: " << bo_home << std::endl;
-    if (bo_home) {
-      bo_home_config_dir = std::string(bo_home);
-    } else {
-      std::cout << "env.BO_HOME not found " << std::endl;
-      const char *home = std::getenv("HOME");
-      bo_home_config_dir = std::string(home ? home : ".") + "/.bo-by-sea5kg";
-    }
-    std::cout << "bo_home_config_dir " << bo_home_config_dir << std::endl;
-    fs::create_directories(bo_home_config_dir);
-    config_path = bo_home_config_dir + "/config.yml";
-    load();
-  }
-
-  void load() {
-    workdirs.clear();
-    std::ifstream f(config_path);
-    if (!f)
-      return;
-    std::string line;
-    WorkdirConfig cur;
-    bool in_workdir = false;
-    while (std::getline(f, line)) {
-      line = bo::trim(line);
-      if (line.empty())
-        continue;
-      if (line.rfind("workdir:", 0) == 0) {
-        if (in_workdir)
-          workdirs.push_back(cur);
-        cur = WorkdirConfig{};
-        cur.workdir = bo::trim(line.substr(8));
-        in_workdir = true;
-      } else if (line.rfind("host:", 0) == 0) {
-        cur.server.host = bo::trim(line.substr(5));
-      } else if (line.rfind("port:", 0) == 0) {
-        cur.server.port = std::stoi(bo::trim(line.substr(5)));
-      } else if (line.rfind("target_dir:", 0) == 0) {
-        cur.server.target_dir = bo::trim(line.substr(11));
-      } else if (line.rfind("cache_path:", 0) == 0) {
-        cur.server.cache_path = bo::trim(line.substr(11));
-      }
-    }
-    if (in_workdir)
-      workdirs.push_back(cur);
-  }
-
-  void save() {
-    std::ofstream f(config_path);
-    for (const auto &w : workdirs) {
-      f << "workdir: " << w.workdir << "\n";
-      f << "host: " << w.server.host << "\n";
-      f << "port: " << w.server.port << "\n";
-      f << "target_dir: " << w.server.target_dir << "\n";
-      f << "cache_path: " << w.server.cache_path << "\n";
-    }
-  }
-
-  WorkdirConfig *find(const std::string &dir) {
-    for (auto &w : workdirs)
-      if (dir.rfind(w.workdir, 0) == 0)
-        return &w;
-    return nullptr;
-  }
-
-  WorkdirConfig *find_exact(const std::string &dir) {
-    for (auto &w : workdirs)
-      if (w.workdir == dir)
-        return &w;
-    return nullptr;
-  }
-};
-
 static void print_help() {
   std::cout << "Usage:\n"
                "    'bo config init' - add current directory to config\n"
@@ -401,7 +304,7 @@ static void print_help() {
 
 int main(int argc, char **argv) {
   std::cout
-      << "Welcome to bo (" << VERSION << ") c++ version!\n"
+      << "Welcome to bo (" << WSJCPP_APP_VERSION << ") c++ version!\n"
       << "Utility for sync files (like rsync) and "
          "run build on remote server (or Virtual Machine in local network).\n";
 
@@ -447,7 +350,7 @@ int main(int argc, char **argv) {
       WorkdirConfig w;
       w.workdir = cur;
       w.server.host = bo::trim(server);
-      w.server.port = DEFAULT_PORT;
+      w.server.port = bo::DEFAULT_PORT;
       w.server.target_dir = bo::trim(target);
       std::string hash_src =
           cur + "|" + w.server.target_dir + "|" + w.server.host;
@@ -512,7 +415,7 @@ int main(int argc, char **argv) {
   }
 
   if (args[0] == "server") {
-    bo::BoServer server("0.0.0.0", DEFAULT_PORT);
+    bo::BoServer server("0.0.0.0", bo::DEFAULT_PORT);
     server.start();
     return 0;
   }

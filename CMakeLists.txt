@@ -15,6 +15,7 @@ set(EXECUTABLE_OUTPUT_PATH ${bo_SOURCE_DIR})
 
 # include header dirs
 list (APPEND WSJCPP_INCLUDE_DIRS "src")
+list (APPEND WSJCPP_INCLUDE_DIRS "src/include")
 
 list (APPEND WSJCPP_SOURCES "src/third_party/md5/md5.cpp")
 list (APPEND WSJCPP_SOURCES "src/bo/bo_utils.cpp")

@@ -1,4 +1,3 @@
-// bo_client_socket_protocol.h
 #pragma once
 
 #include <string>
