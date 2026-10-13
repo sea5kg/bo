@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 
 project(bo)
 
-# include(${CMAKE_CURRENT_SOURCE_DIR}/src.wsjcpp/CMakeLists.txt)
+include(${CMAKE_CURRENT_SOURCE_DIR}/src.wsjcpp/CMakeLists.txt)
 
 #### BEGIN_WSJCPP_APPEND
 #### END_WSJCPP_APPEND
