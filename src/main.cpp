@@ -306,14 +306,22 @@ struct WorkdirConfig {
 class BoConfig {
 public:
   std::string config_path;
-  std::string home_dir;
+  std::string bo_home_config_dir;
   std::vector<WorkdirConfig> workdirs;
 
   void init() {
-    const char *home = std::getenv("HOME");
-    home_dir = std::string(home ? home : ".") + "/.bo-by-sea5kg";
-    fs::create_directories(home_dir);
-    config_path = home_dir + "/config.yml";
+    const char *bo_home = std::getenv("BO_HOME");
+    // std::cout << "bo_home: " << bo_home << std::endl;
+    if (bo_home) {
+      bo_home_config_dir = std::string(bo_home);
+    } else {
+      std::cout << "env.BO_HOME not found " << std::endl;
+      const char *home = std::getenv("HOME");
+      bo_home_config_dir = std::string(home ? home : ".") + "/.bo-by-sea5kg";
+    }
+    std::cout << "bo_home_config_dir " << bo_home_config_dir << std::endl;
+    fs::create_directories(bo_home_config_dir);
+    config_path = bo_home_config_dir + "/config.yml";
     load();
   }
 
@@ -375,9 +383,6 @@ public:
   }
 };
 
-// ---------------------------------------------------------------
-// Точка входа
-// ---------------------------------------------------------------
 static void print_help() {
   std::cout << "Usage:\n"
                "    'bo config init' - add current directory to config\n"
@@ -447,7 +452,7 @@ int main(int argc, char **argv) {
       std::string hash_src =
           cur + "|" + w.server.target_dir + "|" + w.server.host;
       w.server.cache_path =
-          config.home_dir + "/" + bo::md5_by_string(hash_src) + ".yml";
+          config.bo_home_config_dir + "/" + bo::md5_by_string(hash_src) + ".yml";
       config.workdirs.push_back(w);
       config.save();
       std::cout << "Done.\n";
